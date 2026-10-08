@@ -22,6 +22,19 @@ target (or about nine minutes at most), shows the result and moves on.
 | `turbo` | Battletoads' Turbo Tunnel |
 | `tanks` | Battle City |
 
+## Screenshots
+
+| | | |
+|:-:|:-:|:-:|
+| <img src="docs/screenshots/snake.png" width="300" alt="snake"> | <img src="docs/screenshots/tetris.png" width="300" alt="tetris"> | <img src="docs/screenshots/bomber.png" width="300" alt="bomber"> |
+| `snake` | `tetris` | `bomber` |
+| <img src="docs/screenshots/sonic.png" width="300" alt="sonic"> | <img src="docs/screenshots/fzero.png" width="300" alt="fzero"> | <img src="docs/screenshots/moto.png" width="300" alt="moto"> |
+| `sonic` | `fzero` | `moto` |
+| <img src="docs/screenshots/pacman.png" width="300" alt="pacman"> | <img src="docs/screenshots/invaders.png" width="300" alt="invaders"> | <img src="docs/screenshots/frogger.png" width="300" alt="frogger"> |
+| `pacman` | `invaders` | `frogger` |
+| <img src="docs/screenshots/battletoads.png" width="300" alt="battletoads"> | <img src="docs/screenshots/turbo.png" width="300" alt="turbo"> | <img src="docs/screenshots/tanks.png" width="300" alt="tanks"> |
+| `battletoads` | `turbo` | `tanks` |
+
 ## Requirements
 
 - **Device:** Linux with a 1920x1080, 16 bit (RGB565) framebuffer at `/dev/fb0`
