@@ -1,0 +1,6 @@
+dist/
+__pycache__/
+*.pyc
+*.raw
+snap_*.png
+sheet_*.png
