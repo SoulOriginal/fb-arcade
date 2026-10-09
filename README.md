@@ -4,7 +4,7 @@ Retro-style arcade games that play themselves, drawn straight to the Linux frame
 No window system, no GPU, no dependencies on the device: just Python 3 and `/dev/fb0`.
 Plug a small board into a TV and it becomes an arcade screensaver.
 
-Twenty-one games rotate with a transition between them. A bot plays each one until it reaches a score
+Twenty-three games rotate with a transition between them. A bot plays each one until it reaches a score
 target (or about nine minutes at most), shows the result and moves on.
 
 | Game | Inspired by |
@@ -30,6 +30,8 @@ target (or about nine minutes at most), shows the result and moves on.
 | `temple` | Temple Run, pseudo-3D endless runner with corners, monkeys and power-ups |
 | `lemmings` | Lemmings, with terrain you can really dig, bash and build |
 | `contra` | Contra, two-player run and gun across jungle, waterfall and alien lair |
+| `gpc` | Grand Prix Circuit, first-person Formula 1 from the cockpit with eight circuits |
+| `motocross` | Excitebike-style dirt-bike racing with ramps, mud and engine heat |
 
 ## Screenshots
 
@@ -49,6 +51,8 @@ target (or about nine minutes at most), shows the result and moves on.
 | `flappy` | `doodle` | `redball` |
 | <img src="docs/screenshots/temple.png" width="300" alt="temple"> | <img src="docs/screenshots/lemmings.png" width="300" alt="lemmings"> | <img src="docs/screenshots/contra.png" width="300" alt="contra"> |
 | `temple` | `lemmings` | `contra` |
+| <img src="docs/screenshots/gpc.png" width="300" alt="gpc"> | <img src="docs/screenshots/motocross.png" width="300" alt="motocross"> |  |
+| `gpc` | `motocross` |  |
 
 ## Requirements
 
