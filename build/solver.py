@@ -20,7 +20,8 @@ for by in range(BH):
             EU[BASE + by * BW + bx], EV[BASE + by * BW + bx] = by * BW + bx, (by + 1) * BW + bx
             VALID.append(BASE + by * BW + bx)
 DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1))
-APPLES = int(os.environ.get("SNAKE_APPLES", "200"))
+APPLES = int(os.environ.get("SNAKE_APPLES", "360"))
+AHEAD = 56            # how far ahead along the cycle an apple may appear
 SHRINK_SHARE = 0.4
 MIN_SHRINK_LEN = 6
 
@@ -103,7 +104,7 @@ class Constraints:
                     comps -= 1
         return comps == 1
 
-    def tree(self):
+    def tree(self, rnd=None):
         par = list(range(BASE))
 
         def find(x):
@@ -116,8 +117,11 @@ class Constraints:
             if self.p[e] > 0:
                 par[find(EU[e])] = find(EV[e])
                 edges.add(e)
-        for e in self.valid:
-            if self.p[e] == 0 and self.m[e] == 0 and find(EU[e]) != find(EV[e]):
+        others = [e for e in self.valid if self.p[e] == 0 and self.m[e] == 0]
+        if rnd is not None:
+            rnd.shuffle(others)
+        for e in others:
+            if find(EU[e]) != find(EV[e]):
                 par[find(EU[e])] = find(EV[e])
                 edges.add(e)
         return edges
@@ -178,7 +182,7 @@ def bfs_from(food, blocked):
     return d
 
 
-def solve(seed, stall_limit=500):
+def solve(seed):
     rnd = random.Random(seed)
     bricks = pick_bricks(rnd)
     brick_cells = {(bx * 2 + i, by * 2 + j) for bx, by in bricks for i in (0, 1) for j in (0, 1)}
@@ -188,61 +192,63 @@ def solve(seed, stall_limit=500):
     for a, b in zip(body, body[1:]):
         cons.add(a, b, 1)
     assert cons.feasible()
+    plan = {}
 
     def free_cells():
         return [(x, y) for y in range(GH) for x in range(GW) if (x, y) not in occ and (x, y) not in brick_cells]
 
     def new_food():
+        # The apple appears on the stretch of a valid cycle just ahead of the head (never in the first few cells), and
+        # that cycle becomes the plan. From here on every move has to bring the apple strictly closer along a valid
+        # cycle, so the snake can never wander or loop round the board without a goal.
         kind = 1 if len(body) >= MIN_SHRINK_LEN and rnd.random() < SHRINK_SHARE else 0
-        c = rnd.choice(free_cells())
+        edges = cons.tree(rnd)
+        cyc = cycle_from_tree(edges, body[0], body[1], bricks)
+        ahead = [c for c in cyc[4:AHEAD] if c not in occ]
+        c = rnd.choice(ahead or free_cells())
+        plan["tree"] = edges
         return (c[0], c[1], kind)
-
-    food = new_food()
-    foods, moves, since, follow = [food], [], 0, None
-    eaten = 0
 
     def tail_edges(drop):
         # the edges that disappear when `drop` tail cells are removed
         return [(body[-1 - k - 1], body[-1 - k]) for k in range(drop)]
 
+    def drop_for(eat, food):
+        return (2 if food[2] else 0) if eat else 1
+
+    food = new_food()
+    foods, moves, eaten = [food], [], 0
     while True:
-        head, tail = body[0], body[-1]
+        head = body[0]
         fcell = food[:2]
-        if follow is not None:
-            n = follow.pop(0)
-        else:
-            dist = bfs_from(fcell, (occ - {tail}) | brick_cells)
-            cands = []
-            for k, (dx, dy) in enumerate(DIRS):
-                n = (head[0] + dx, head[1] + dy)
-                if 0 <= n[0] < GW and 0 <= n[1] < GH and n not in brick_cells and (n not in occ or n == tail) and n in dist:
-                    straight = 0 if len(body) > 1 and (head[0] - body[1][0], head[1] - body[1][1]) == (dx, dy) else 1
-                    cands.append((dist[n], straight, k, n))
-            cands.sort()
-            n = None
-            for _, _, _, c in cands:
-                eat = c == fcell
-                drop = 0 if eat and food[2] == 0 else (2 if eat else 1)
-                removed = tail_edges(drop)
-                cons.add(head, c, 1)
-                for a, b in removed:
-                    cons.add(a, b, -1)
-                ok = cons.feasible()
-                cons.add(head, c, -1)
-                for a, b in removed:
-                    cons.add(a, b, 1)
-                if ok:
-                    n = c
-                    break
-            if n is None:
-                # No proven shortcut: follow a cycle that contains the body, which always exists.
-                cyc = cycle_from_tree(cons.tree(), head, body[1], bricks)
-                follow = cyc[:cyc.index(fcell) + 1]
-                n = follow.pop(0)
+        cyc = cycle_from_tree(plan["tree"], head, body[1], bricks)
+        best = (cyc.index(fcell), 1, 0)       # (moves left after the step, turns, direction): the plan's own step
+        n, new_tree = cyc[0], None
+        for k, (dx, dy) in enumerate(DIRS):
+            c = (head[0] + dx, head[1] + dy)
+            if not (0 <= c[0] < GW and 0 <= c[1] < GH) or c in brick_cells or (c in occ and c != body[-1]):
+                continue
+            eat = c == fcell
+            removed = tail_edges(drop_for(eat, food))
+            cons.add(head, c, 1)
+            for a, b in removed:
+                cons.add(a, b, -1)
+            tree = cons.tree() if cons.feasible() else None
+            cons.add(head, c, -1)
+            for a, b in removed:
+                cons.add(a, b, 1)
+            if tree is None:
+                continue
+            left = 0 if eat else cycle_from_tree(tree, c, head, bricks).index(fcell) + 1
+            straight = 0 if len(body) > 1 and (head[0] - body[1][0], head[1] - body[1][1]) == (dx, dy) else 1
+            if (left, straight) < best[:2]:
+                best, n, new_tree = (left, straight, k), c, tree
+        if new_tree is not None:
+            plan["tree"] = new_tree
         eat = n == fcell
         moves.append(DIRS.index((n[0] - head[0], n[1] - head[1])))
+        drop = drop_for(eat, food)
         cons.add(head, n, 1)
-        drop = 0 if eat and food[2] == 0 else (2 if eat else 1)
         for a, b in tail_edges(drop):
             cons.add(a, b, -1)
         # free the tail first: the head may enter the very cell the tail is leaving
@@ -250,20 +256,13 @@ def solve(seed, stall_limit=500):
             occ.discard(body.pop())
         body.insert(0, n)
         occ.add(n)
+        assert n not in set(body[1:]), "died"
         if eat:
             eaten += 1
             if eaten >= APPLES:
                 return moves, foods, sorted(bricks)
             food = new_food()
             foods.append(food)
-            since, follow = 0, None
-        else:
-            since += 1
-            if since > stall_limit and follow is None:
-                cyc = cycle_from_tree(cons.tree(), body[0], body[1], bricks)
-                follow = cyc[:cyc.index(food[:2]) + 1]
-                since = 0
-        assert n not in set(body[1:]), "died"
 
 
 if __name__ == "__main__":
