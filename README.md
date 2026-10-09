@@ -12,7 +12,7 @@ target (or about nine minutes at most), shows the result and moves on.
 | `snake` | Snake with brick walls and a choice of red (grow), blue (shrink) and golden (bonus) apples, solved offline with a dynamic Hamiltonian cycle |
 | `tetris` | Tetris, two-piece lookahead bot |
 | `bomber` | Bomberman |
-| `sonic` | Sonic the Hedgehog, three zones with scanline parallax |
+| `sonic` | Sonic the Hedgehog: short acts with loops, four characters (hedgehog, fox, echidna, dark hedgehog), scanline parallax |
 | `fzero` | F-Zero, pseudo-3D hover racing |
 | `moto` | Hang-On / Super Hang-On, pseudo-3D motorbike racing |
 | `pacman` | Pac-Man, original maze and ghost targeting |
@@ -92,3 +92,7 @@ and this project is not affiliated with or endorsed by them.
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+### Optional sprite sheets
+
+The repository only contains hand-drawn placeholder art. If you own sprite sheets you want to use for `sonic`, put them in `build/assets/` (ignored by git) before `make build`; see `build/g_sonic_sheets.py` for the expected file names.
