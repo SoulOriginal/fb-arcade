@@ -1219,8 +1219,8 @@ class Game:
             pose, i = ("walk", int(self.anim) % 6) if gs < 3.2 else ("run", int(self.anim) % 4)
         else:
             pose = "blur"
-            self.anim += 0.5
-            i = int(self.anim) % 2
+            self.anim += 0.8
+            i = int(self.anim) % 3
         return D["sonic" if self.facing > 0 else "sonic_l"][pose][i]
 
     def build_bg(self, camx, camy):

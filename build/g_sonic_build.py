@@ -207,25 +207,30 @@ def sonic_frame(kind, ph=0.0):
     far_leg, near_leg = (15.5, 40.6), (23.8, 40.6)
     far_arm, near_arm = (14.2, 33), (25, 33.5)
     blur = False
+    ghost = None
     front = False
     if kind == "walk":
         s, co = math.sin(ph), math.cos(ph)
-        far_leg = (19.5 - 5.5 * s, 40.6 - 3.2 * max(0, -co))
-        near_leg = (19.5 + 5.5 * s, 40.6 - 3.2 * max(0, co))
-        far_arm, near_arm = (19.5 + 5 * s, 33.5), (19.5 - 5 * s, 33.5)
+        hx, hy, tx, ty, trail = 23, 15.5, 20.5, 27.3, 0.4
+        hip = (20, 33)
+        far_leg = (20 - 7 * s, 40.6 - 4 * max(0, -co))
+        near_leg = (20 + 7 * s, 40.6 - 4 * max(0, co))
+        far_arm, near_arm = (20 + 6 * s, 33), (20 - 6 * s, 33)
         hy += 0.6 * abs(math.sin(2 * ph))
-        ty += 0.4 * abs(math.sin(2 * ph))
     elif kind == "run":
+        # jog: clear forward lean, long scissor stride, legs smeared by a lighter red ghost between them
         s, co = math.sin(ph), math.cos(ph)
-        far_leg = (19.5 - 8 * s, 40.4 - 7 * max(0, -co))
-        near_leg = (19.5 + 8 * s, 40.4 - 7 * max(0, co))
-        hx, hy, tx, ty, trail = 25, 16, 21, 28, 1.0
-        hip = (20.5, 34)
-        far_arm, near_arm = (11.5, 29 + 2 * s), (13.5, 31 - 2 * s)
+        hx, hy, tx, ty, trail = 28, 18, 23, 29, 1.4
+        hip = (21.5, 34.5)
+        far_leg = (21.5 - 11 * s, 40.4 - 7 * max(0, -co))
+        near_leg = (21.5 + 11 * s, 40.4 - 7 * max(0, co))
+        far_arm, near_arm = (8, 28 + 2 * s), (10, 31 - 2 * s)
+        ghost = ((far_leg[0] + near_leg[0]) / 2, 39.5)
     elif kind == "blur":
-        hx, hy, tx, ty, trail = 26, 16.5, 22, 28.5, 1.4
-        hip = (21, 34)
-        far_arm, near_arm = (10, 28), (12, 30.5)
+        # full-speed run: legs become a figure-8 wheel of red loops, body leans hard forward, spines stream back
+        hx, hy, tx, ty, trail = 31, 21, 24.5, 31, 2.6
+        hip = (22, 35)
+        far_arm, near_arm = (7, 32), (9, 34.5)
         blur = True
     elif kind == "skid":
         hx, hy, tx, ty = 19, 16.5, 17.5, 27.5
@@ -260,12 +265,26 @@ def sonic_frame(kind, ph=0.0):
         head(c, hx, hy, eye, mouth, trail)
     arm(c, (tx - 1, ty - 3), far_arm)
     if blur:
-        c.ell(hip[0] - 1.5, 38.2, 8.4, 5.3, RD)
         for k in range(3):
-            a = ph * 1.7 + k * 2.1
-            c.line((hip[0] - 1.5 + 5 * math.cos(a), 38.2 + 3.2 * math.sin(a)),
-                   (hip[0] - 1.5 + 7.6 * math.cos(a + 0.7), 38.2 + 4.8 * math.sin(a + 0.7)), 1.2, WH, out=None)
+            c.line((1 + k * 2, 36 + k * 2), (9 + k * 2, 36 + k * 2), 0.7, (160, 192, 224), out=None)
+        for dxp, dyp in ((3, 41), (7, 39.5)):
+            c.ell(dxp, dyp, 2.2, 1.6, (224, 224, 192), out=None)
+        pts = [(hip[0] - 1 + 9.5 * math.sin(t * math.pi / 12), 39.2 + 4.6 * math.sin(t * math.pi / 6)) for t in range(25)]
+        f = int(round(ph / 2.1))
+        for i, (q0, q1) in enumerate(zip(pts, pts[1:])):
+            c.line(q0, q1, 3.0, (RD, RDD, (224, 128, 96))[(i // 2 + f) % 3])
+        for i, (q0, q1) in enumerate(zip(pts, pts[1:])):
+            if (i // 2 + f) % 3 == 0:
+                c.line(q0, q1, 1.0, WH, out=None)
+        for k in range(2):
+            t = ph * 1.3 + k * math.pi
+            sx, sy = hip[0] - 1 + 9.5 * math.sin(t), 39.2 + 4.6 * math.sin(2 * t)
+            c.ell(sx + 0.8, sy, 3.6, 2.4, RD)
+            c.rect(sx - 1.4, sy - 2.6, sx + 0.4, sy + 1.2, WH, out=None)
+            c.rect(sx - 0.8, sy - 1.8, sx - 0.1, sy - 0.4, GOLD, out=None)
     else:
+        if ghost:
+            c.ell(ghost[0], ghost[1], 8, 3.6, (224, 96, 64), out=None)
         leg(c, hip, far_leg)
         leg(c, hip, near_leg)
     torso(c, tx, ty)
@@ -284,7 +303,7 @@ def sonic_sets():
         "wait": [sonic_frame("wait", i) for i in range(3)],
         "walk": [sonic_frame("walk", i * math.pi / 3) for i in range(6)],
         "run": [sonic_frame("run", i * math.pi / 2) for i in range(4)],
-        "blur": [sonic_frame("blur", i * 0.9) for i in range(2)],
+        "blur": [sonic_frame("blur", i * 2.1) for i in range(3)],
         "ball": [sonic_frame("ball", i * math.pi / 5) for i in range(4)],
         "skid": [sonic_frame("skid", 0), sonic_frame("skid", 1)],
         "hurt": [sonic_frame("hurt")],
