@@ -4,7 +4,7 @@ Retro-style arcade games that play themselves, drawn straight to the Linux frame
 No window system, no GPU, no dependencies on the device: just Python 3 and `/dev/fb0`.
 Plug a small board into a TV and it becomes an arcade screensaver.
 
-Twenty games rotate with a transition between them. A bot plays each one until it reaches a score
+Twenty-one games rotate with a transition between them. A bot plays each one until it reaches a score
 target (or about nine minutes at most), shows the result and moves on.
 
 | Game | Inspired by |
@@ -29,6 +29,7 @@ target (or about nine minutes at most), shows the result and moves on.
 | `redball` | Red Ball, physics platformer with bosses across grass, factory, lava and ice worlds |
 | `temple` | Temple Run, pseudo-3D endless runner with corners, monkeys and power-ups |
 | `lemmings` | Lemmings, with terrain you can really dig, bash and build |
+| `contra` | Contra, two-player run and gun across jungle, waterfall and alien lair |
 
 ## Screenshots
 
@@ -46,8 +47,8 @@ target (or about nine minutes at most), shows the result and moves on.
 | `isaac` | `persia` | `deadspace` |
 | <img src="docs/screenshots/flappy.png" width="300" alt="flappy"> | <img src="docs/screenshots/doodle.png" width="300" alt="doodle"> | <img src="docs/screenshots/redball.png" width="300" alt="redball"> |
 | `flappy` | `doodle` | `redball` |
-| <img src="docs/screenshots/temple.png" width="300" alt="temple"> | <img src="docs/screenshots/lemmings.png" width="300" alt="lemmings"> |  |
-| `temple` | `lemmings` |  |
+| <img src="docs/screenshots/temple.png" width="300" alt="temple"> | <img src="docs/screenshots/lemmings.png" width="300" alt="lemmings"> | <img src="docs/screenshots/contra.png" width="300" alt="contra"> |
+| `temple` | `lemmings` | `contra` |
 
 ## Requirements
 
