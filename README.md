@@ -4,7 +4,7 @@ Retro-style arcade games that play themselves, drawn straight to the Linux frame
 No window system, no GPU, no dependencies on the device: just Python 3 and `/dev/fb0`.
 Plug a small board into a TV and it becomes an arcade screensaver.
 
-Seventeen games rotate with a transition between them. A bot plays each one until it reaches a score
+Eighteen games rotate with a transition between them. A bot plays each one until it reaches a score
 target (or about nine minutes at most), shows the result and moves on.
 
 | Game | Inspired by |
@@ -26,6 +26,7 @@ target (or about nine minutes at most), shows the result and moves on.
 | `deadspace` | Dead Space, side-view survival horror with limb-by-limb dismemberment |
 | `flappy` | Flappy Bird, with the original physics, medals and score card |
 | `doodle` | Doodle Jump, notebook paper, every platform type, monsters and power-ups |
+| `redball` | Red Ball, physics platformer with bosses across grass, factory, lava and ice worlds |
 
 ## Screenshots
 
@@ -41,8 +42,8 @@ target (or about nine minutes at most), shows the result and moves on.
 | `battletoads` | `turbo` | `tanks` |
 | <img src="docs/screenshots/isaac.png" width="300" alt="isaac"> | <img src="docs/screenshots/persia.png" width="300" alt="persia"> | <img src="docs/screenshots/deadspace.png" width="300" alt="deadspace"> |
 | `isaac` | `persia` | `deadspace` |
-| <img src="docs/screenshots/flappy.png" width="300" alt="flappy"> | <img src="docs/screenshots/doodle.png" width="300" alt="doodle"> |  |
-| `flappy` | `doodle` |  |
+| <img src="docs/screenshots/flappy.png" width="300" alt="flappy"> | <img src="docs/screenshots/doodle.png" width="300" alt="doodle"> | <img src="docs/screenshots/redball.png" width="300" alt="redball"> |
+| `flappy` | `doodle` | `redball` |
 
 ## Requirements
 
