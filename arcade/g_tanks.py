@@ -55,7 +55,7 @@ def text(s, x, y, variant):
 
 class Tank:
     __slots__ = ("x", "y", "d", "kind", "hp", "flash", "acc", "dist", "spawn", "bullets", "slide", "shield",
-                 "level", "blocked", "cool")
+                 "level", "blocked", "cool", "jam")
 
     def __init__(self, x, y, d, kind):
         self.x, self.y, self.d, self.kind = x, y, d, kind
@@ -70,6 +70,7 @@ class Tank:
         self.level = 0
         self.blocked = False
         self.cool = 0                    # ticks to wait before the next turn decision: no spinning in place
+        self.jam = 0                     # consecutive waits behind another tank
 
 
 class Bullet:
@@ -825,7 +826,16 @@ class Game:
                     if e.cool:
                         pass
                     elif not e.blocked:
-                        e.cool = 12                  # another tank is in the way: wait for it instead of turning round
+                        # Another tank is in the way: wait for it instead of turning round, but only for a while. A
+                        # corridor full of tanks that all wait for each other would never clear.
+                        e.cool = 12
+                        e.jam += 1
+                        if e.jam >= 3:
+                            e.jam = 0
+                            if e.x & 7 == 0 and e.y & 7 == 0:
+                                self.enemy_turn(e)
+                            else:
+                                e.d = OPPOSITE[e.d]
                     elif e.x & 7 == 0 and e.y & 7 == 0:
                         self.enemy_turn(e)
                     elif random.random() < 0.3:
@@ -833,6 +843,7 @@ class Game:
                         e.cool = 6
                     break
                 e.blocked = False
+                e.jam = 0
                 if e.x & 7 == 0 and e.y & 7 == 0 and random.random() < 0.1:
                     self.turn(e, self.enemy_choose_dir(e))
             if e.bullets == 0:
