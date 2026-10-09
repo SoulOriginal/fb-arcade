@@ -4,3 +4,5 @@ __pycache__/
 *.raw
 snap_*.png
 sheet_*.png
+assets/
+build/assets/

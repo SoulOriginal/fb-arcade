@@ -19,11 +19,13 @@ def snap(rgb):
     return tuple(min(224, (v + 16) // 32 * 32) for v in rgb[:3])
 
 
-def chunk(rgb):
-    rgb = snap(rgb)
-    c = _chunks.get(rgb)
+def chunk(rgb, snapped=True):
+    # snapped=False keeps the exact 565 colour: used for frames sliced from the owner's sheets
+    rgb = snap(rgb) if snapped else tuple(rgb[:3])
+    key = (rgb, snapped)
+    c = _chunks.get(key)
     if c is None:
-        c = _chunks[rgb] = struct.pack("<H", rgb565(*rgb)) * K
+        c = _chunks[key] = struct.pack("<H", rgb565(*rgb)) * K
     return c
 
 
@@ -34,7 +36,7 @@ def img_rows(im):
     return [b"".join(chunk(px[x, y]) for x in range(w)) for y in range(h)]
 
 
-def run_sprite(im):
+def run_sprite(im, snapped=True):
     # RGBA -> (w, h, rows) where rows[y] = [(x_offset_vpx, bytes), ...] of opaque runs.
     w, h = im.size
     px = im.load()
@@ -47,7 +49,7 @@ def run_sprite(im):
                 continue
             x0, buf = x, []
             while x < w and px[x, y][3] >= 128:
-                buf.append(chunk(px[x, y][:3]))
+                buf.append(chunk(px[x, y][:3], snapped))
                 x += 1
             runs.append((x0, b"".join(buf)))
         rows.append(runs)
@@ -186,8 +188,12 @@ def torso(c, tx, ty):
     c.ell(tx + 2.2, ty + 1.6, 3.2, 5.2, SK, out=None)
 
 
-def sonic_frame(kind, ph=0.0):
+def sonic_frame(kind, ph=0.0, who="sonic"):
     c = C(40, 44)
+    if kind == "glide":
+        return finish(glide_frame(c, ph), who)
+    if kind == "climb":
+        return finish(climb_frame(c, ph), who)
     if kind == "ball":
         cx, cy = 20, 29.5
         for k in range(5):
@@ -200,7 +206,7 @@ def sonic_frame(kind, ph=0.0):
             a0 = math.degrees(ph) * 2 + k * 120
             c.d.pieslice([(cx - 10) * 8, (cy - 10) * 8, (cx + 10) * 8, (cy + 10) * 8], a0, a0 + 50, fill=WH)
         c.ell(cx, cy, 3.5, 3.5, BLL, out=None)
-        return down(c.im, 34, 38)
+        return finish(down(c.im, 34, 38), who)
     hx, hy, tx, ty = 22, 15, 19.5, 27
     hip = (19.5, 33)
     eye, mouth, trail = "open", False, 0.0
@@ -257,10 +263,20 @@ def sonic_frame(kind, ph=0.0):
         far_arm = (12, 32)
         if ph == 1:
             near_leg = (24.5, 38.6)
+    elif kind == "fly":
+        far_leg, near_leg = (18, 40.6), (21.8, 40.6)
+        far_arm, near_arm = (16, 36), (25, 36)
+        hip = (19.5, 33)
     elif kind != "idle":
         raise ValueError(kind)
+    if who == "tails":
+        tails_behind(c, tx, ty, ph, kind == "fly")
     if front:
         head_front(c, hx, hy, False)
+    elif who == "tails":
+        head_tails(c, hx, hy, eye, mouth, trail)
+    elif who == "knuckles":
+        head_knux(c, hx, hy, eye, mouth, trail)
     else:
         head(c, hx, hy, eye, mouth, trail)
     arm(c, (tx - 1, ty - 3), far_arm)
@@ -294,34 +310,347 @@ def sonic_frame(kind, ph=0.0):
         c.ell(near_arm[0], near_arm[1], 2.6, 2.6, (224, 224, 224))
     else:
         arm(c, (tx + 1.5, ty - 3), near_arm)
+    if who == "knuckles":
+        for hand in (far_arm, near_arm):
+            for dxs in (-1.2, 1.2):
+                c.poly([(hand[0] + dxs - 0.9, hand[1] - 2), (hand[0] + dxs, hand[1] - 4.6), (hand[0] + dxs + 0.9, hand[1] - 2)],
+                       (224, 224, 224), out=OUT, ow=0.3)
+        c.poly([(tx - 3, ty - 4), (tx + 1, ty - 1), (tx + 4, ty - 4), (tx + 1, ty - 6.5)], (224, 224, 224), out=None)
+    return finish(down(c.im, 34, 38), who)
+
+
+# ---------------------------------------------------------------------------------------- characters
+# Tails and Knuckles have no sheet: they reuse the hedgehog pose skeleton (same hip, arm and leg positions) with their
+# own head, tails and palette. Frames are drawn in Sonic's colours and recoloured per character after downscaling.
+PAL = {
+    "dark": {"body": (40, 40, 48), "shade": (16, 16, 24), "light": (224, 32, 0), "line": (0, 0, 0),
+             "skin": (224, 160, 128), "shoe": None},
+    "tails": {"body": (224, 128, 0), "shade": (160, 64, 0), "light": (224, 192, 64), "line": (96, 32, 0),
+              "skin": (224, 224, 224), "shoe": None},
+    "knuckles": {"body": (224, 32, 0), "shade": (160, 0, 0), "light": (224, 96, 64), "line": (64, 0, 0),
+                 "skin": (224, 160, 128), "shoe": ((224, 192, 0), (160, 128, 0))},
+}
+
+
+def finish(im, who):
+    if who == "sonic":
+        return im
+    pal = PAL[who]
+    px = im.load()
+    w, h = im.size
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = px[x, y]
+            if not a:
+                continue
+            if b > r + 24 and b >= g - 10:
+                lum = (r + g + b) / 3
+                col = pal["line"] if lum < 48 else pal["shade"] if lum < 92 else pal["body"] if lum < 132 else pal["light"]
+                px[x, y] = col + (255,)
+            elif r > 130 and g < 90 and b < 70:
+                if pal["shoe"]:
+                    px[x, y] = (pal["shoe"][0] if r > 190 else pal["shoe"][1]) + (255,)
+            elif r > 170 and 100 < g < 200 and b < 170 and r - b > 50 and g > b + 15:
+                px[x, y] = pal["skin"] + (255,)
+    return im
+
+
+def tails_behind(c, tx, ty, ph, fly):
+    base = (tx - 3, ty + 7)
+    if fly:
+        # the two tails spin like a rotor behind the hanging body
+        cx, cy = tx - 2, ty + 3
+        for k in range(2):
+            a = ph * 1.7 + k * 1.57
+            ry = 1.6 + 3.8 * abs(math.sin(a))
+            c.ell(cx, cy - 4 * k, 13, ry, BL)
+        for sx in (-12.5, 12.5):
+            c.ell(cx + sx, cy, 2.6, 2.6, WH)
+        return
+    for k, s in enumerate((0.55, -0.35)):
+        a = s + 0.35 * math.sin(ph * 0.5 + k)
+        mid = (base[0] - 8 * math.cos(a), base[1] + 4 * math.sin(a) + 1)
+        tip = (base[0] - 16 * math.cos(a), base[1] + 8 * math.sin(a) + 1)
+        c.line(base, mid, 5.4, BL)
+        c.line(mid, tip, 4.4, BL)
+        c.ell(tip[0], tip[1], 3.0, 3.0, WH)
+
+
+def head_tails(c, hx, hy, eye="open", mouth=False, trail=0.0):
+    c.poly([(hx - 6, hy - 6), (hx - 15, hy - 3 + trail * 2), (hx - 7, hy + 3)], BL)
+    c.poly([(hx - 7, hy + 2), (hx - 14, hy + 7 + trail * 2), (hx - 3, hy + 7)], BL)
+    c.poly([(hx - 7, hy - 7), (hx - 6, hy - 17), (hx - 0.5, hy - 8)], BL)
+    c.poly([(hx - 1, hy - 8), (hx + 3, hy - 16), (hx + 6, hy - 6)], BL)
+    c.poly([(hx - 5.5, hy - 9), (hx - 5.5, hy - 14), (hx - 2.5, hy - 9)], SK, out=None)
+    c.ell(hx, hy, 9.6, 9.2, BL)
+    c.poly([(hx + 1, hy + 7), (hx + 5, hy + 12), (hx + 10, hy + 6)], WH)
+    c.ell(hx + 6, hy + 3.8, 5.4, 4.4, SK)
+    c.ell(hx + 10.8, hy + 2, 1.6, 1.3, OUT, out=None)
+    c.ell(hx + 3.4, hy - 2.4, 4.0, 5.2, WH)
+    if eye == "open":
+        c.ell(hx + 4.8, hy - 2.0, 1.8, 2.8, OUT, out=None)
+        c.ell(hx + 4.4, hy - 3.4, 0.6, 0.7, WH, out=None)
+    else:
+        c.line((hx + 1.4, hy - 5), (hx + 5.6, hy), 0.7, OUT, out=None)
+        c.line((hx + 5.6, hy - 5), (hx + 1.4, hy), 0.7, OUT, out=None)
+    if mouth:
+        c.ell(hx + 7.6, hy + 7.2, 2.0, 1.7, RDD, out=None)
+    else:
+        c.line((hx + 5.5, hy + 7), (hx + 9.5, hy + 6.4), 0.5, OUT, out=None)
+
+
+def head_knux(c, hx, hy, eye="open", mouth=False, trail=0.0):
+    for dy, ln in ((-6, 15), (-1, 17), (4, 14)):
+        c.poly([(hx - 5, hy + dy - 3), (hx - 6, hy + dy + 3), (hx - ln - trail * 2, hy + dy + 2 + trail)], BL)
+    c.poly([(hx - 3, hy - 8), (hx + 1, hy - 14), (hx + 5, hy - 7)], BL)
+    c.ell(hx, hy, 9.6, 9.2, BL)
+    c.ell(hx + 5.8, hy + 3.8, 5.4, 4.4, SK)
+    c.ell(hx + 10.8, hy + 2, 1.7, 1.4, OUT, out=None)
+    c.ell(hx + 3.4, hy - 2.2, 4.0, 4.6, WH)
+    if eye == "open":
+        c.ell(hx + 4.8, hy - 1.8, 1.7, 2.6, GRN, out=None)
+        c.ell(hx + 5.0, hy - 1.7, 0.9, 1.5, OUT, out=None)
+        c.line((hx + 0.5, hy - 6), (hx + 7, hy - 3.6), 1.1, OUT, out=None)
+    else:
+        c.line((hx + 1.4, hy - 5), (hx + 5.6, hy), 0.7, OUT, out=None)
+        c.line((hx + 5.6, hy - 5), (hx + 1.4, hy), 0.7, OUT, out=None)
+    if mouth:
+        c.ell(hx + 7.4, hy + 7, 2.0, 1.7, RDD, out=None)
+    else:
+        c.line((hx + 5.5, hy + 6.8), (hx + 9.5, hy + 6.2), 0.5, OUT, out=None)
+
+
+def glide_frame(c, ph):
+    # Knuckles gliding: body nearly horizontal, arms stretched forward, legs trailing
+    hx, hy = 31, 20
+    c.poly([(hx - 5, hy - 6), (hx - 15, hy - 3), (hx - 6, hy + 2)], BL)
+    c.poly([(hx - 6, hy + 2), (hx - 16, hy + 5), (hx - 5, hy + 7)], BL)
+    for hand in ((38, 25 + math.sin(ph)), (36, 17 - math.sin(ph))):
+        c.line((26, 24), hand, 2.6, SK)
+        c.ell(hand[0], hand[1], 2.6, 2.6, WH)
+    c.line((16, 27), (7, 30 + math.sin(ph) * 2), 3.4, BL)
+    c.line((17, 28), (6, 34 - math.sin(ph) * 2), 3.4, BL)
+    shoe(c, 5, 31)
+    shoe(c, 4, 36)
+    c.ell(21, 25, 9, 5.5, BL)
+    c.ell(22, 27, 5, 3, SK, out=None)
+    head_knux(c, hx, hy, "open", False, 0.8)
     return down(c.im, 34, 38)
 
 
-def sonic_sets():
-    right = {
-        "idle": [sonic_frame("idle")],
-        "wait": [sonic_frame("wait", i) for i in range(3)],
-        "walk": [sonic_frame("walk", i * math.pi / 3) for i in range(6)],
-        "run": [sonic_frame("run", i * math.pi / 2) for i in range(4)],
-        "blur": [sonic_frame("blur", i * 2.1) for i in range(3)],
-        "ball": [sonic_frame("ball", i * math.pi / 5) for i in range(4)],
-        "skid": [sonic_frame("skid", 0), sonic_frame("skid", 1)],
-        "hurt": [sonic_frame("hurt")],
-        "spring": [sonic_frame("spring")],
-        "wave": [sonic_frame("wave", i * 1.4) for i in range(3)],
-    }
-    return ({k: [run_sprite(f) for f in v] for k, v in right.items()},
-            {k: [run_sprite(flip(f)) for f in v] for k, v in right.items()})
+def climb_frame(c, ph):
+    # Knuckles climbing a wall to his right: hands high on the wall, legs bent below
+    up = math.sin(ph)
+    hx, hy = 19, 12
+    c.poly([(hx - 5, hy - 4), (hx - 15, hy - 1), (hx - 6, hy + 3)], BL)
+    c.line((20, 22), (14, 33 + up), 3.4, BL)
+    c.line((20, 22), (24, 32 - up), 3.4, BL)
+    shoe(c, 13, 35 + up)
+    shoe(c, 25, 34 - up)
+    for hand in ((28, 5 + 2 * up), (29, 15 - 2 * up)):
+        c.line((22, 18), hand, 2.6, SK)
+        c.ell(hand[0], hand[1], 2.6, 2.6, WH)
+    c.ell(20, 22, 6, 8, BL)
+    c.ell(22, 23, 3, 5, SK, out=None)
+    head_knux(c, hx, hy, "open", False, 0.2)
+    return down(c.im, 34, 38)
+
+
+def anchor_of(im):
+    # Frames are anchored at their feet: the bottom edge, and the horizontal centre of mass of the upper body so
+    # that walk cycles with wide strides do not make the body jitter.
+    w, h = im.size
+    px = im.load()
+    xs = [x for y in range(max(1, int(h * 0.6))) for x in range(w) if px[x, y][3] > 0]
+    ax = int(round(sum(xs) / len(xs))) if xs else w // 2
+    return ax, h
+
+
+def frame5(im, snapped, ax=None, ay=None):
+    if ax is None:
+        ax, ay = anchor_of(im)
+    w, h, rows = run_sprite(im, snapped)
+    return (w, h, rows, ax, ay)
+
+
+def both_facings(frames_rgba, snapped):
+    # [(RGBA image, ax, ay)] -> (right-facing frames, left-facing frames), mirrored about the anchor
+    right, left = [], []
+    for im, ax, ay in frames_rgba:
+        right.append(frame5(im, snapped, ax, ay))
+        left.append(frame5(flip(im), snapped, im.width - 1 - ax, ay))
+    return right, left
+
+
+def with_anchor(im):
+    ax, ay = anchor_of(im)
+    return (im, ax, ay)
+
+
+def clean_sonic_fringe(im):
+    # keying residue: greenish dark pixels around the outline become outline-coloured
+    px = im.load()
+    for y in range(im.height):
+        for x in range(im.width):
+            r, g, b, a = px[x, y]
+            if a and g > r + 8 and g > b + 8 and max(r, g, b) < 130:
+                px[x, y] = (10, 10, 30, 255)
+    return im
+
+
+SONIC_MAP = {"idle": [0], "wait": [6, 7, 8, 9], "walk": [14, 15, 16, 17, 18, 19, 20, 21], "run": [22, 23, 24, 25],
+             "blur": [74, 75, 76, 77], "ball": [86, 87, 88, 89], "skid": [98, 99, 100], "spring": [97],
+             "hurt": [127, 128], "death": [132], "wave": [10], "balance": [108, 109, 110, 111], "charge": [4]}
+DARK_MAP = {"idle": [0], "wait": [10, 11, 12, 11], "walk": [16, 17, 18, 19, 20, 21, 22, 15], "run": [24, 25, 26, 27],
+            "blur": [34, 35, 36, 37], "ball": [120, 121, 122, 123], "skid": [51, 52, 53], "spring": [80],
+            "hurt": [103], "death": [74], "wave": [12], "balance": [4], "charge": [124, 125, 126, 127]}
+
+
+def sheet_character(kind, mapping):
+    # Returns {"R": {pose: [frame5]}, "L": {...}} built from the owner's sheet, or None when the sheet is missing.
+    try:
+        import g_sonic_sheets
+    except ImportError:
+        return None
+    sliced = g_sonic_sheets.slice_sheet(kind)
+    if sliced is None:
+        return None
+    frames = sliced[0]
+    out = {"R": {}, "L": {}, "_snapped": False}
+    for pose, idxs in mapping.items():
+        ims = []
+        for i in idxs:
+            im = frames[i].copy()
+            if kind == "sonic":
+                clean_sonic_fringe(im)
+            ims.append(with_anchor(im))
+        out["R"][pose], out["L"][pose] = both_facings(ims, False)
+        if pose == "blur":
+            out["_blur"] = ims
+        if pose == "idle":
+            top = ims[0][0].crop((0, 0, ims[0][0].width, min(ims[0][0].height, 17)))
+            out["icon"] = frame5(top, False, 0, 0)
+    return out
+
+
+def procedural_character(who):
+    kinds = {"idle": [("idle", 0)], "wait": [("wait", i) for i in range(3)],
+             "walk": [("walk", i * math.pi / 3) for i in range(6)], "run": [("run", i * math.pi / 2) for i in range(4)],
+             "blur": [("blur", i * 2.1) for i in range(3)], "ball": [("ball", i * math.pi / 5) for i in range(4)],
+             "skid": [("skid", 0), ("skid", 1)], "hurt": [("hurt", 0)], "death": [("hurt", 0)],
+             "spring": [("spring", 0)], "wave": [("wave", i * 1.4) for i in range(3)],
+             "balance": [("idle", 0)], "charge": [("ball", i * math.pi / 5) for i in range(4)]}
+    if who == "tails":
+        kinds["fly"] = [("fly", i * 1.3) for i in range(4)]
+    if who == "knuckles":
+        kinds["glide"] = [("glide", i * 1.5) for i in range(2)]
+        kinds["climb"] = [("climb", i * math.pi) for i in range(2)]
+    out = {"R": {}, "L": {}, "_snapped": True}
+    for pose, specs in kinds.items():
+        ims = [(sonic_frame(k, ph, who), 17, 38) for k, ph in specs]
+        out["R"][pose], out["L"][pose] = both_facings(ims, True)
+        if pose == "blur":
+            out["_blur"] = ims
+    out["icon"] = frame5(head_icon_who(who), True, 0, 0)
+    return out
+
+
+def head_icon_who(who):
+    c = C(40, 44)
+    fn = {"tails": head_tails, "knuckles": head_knux}.get(who, head)
+    fn(c, 22, 15, "open", False, 0)
+    return finish(down(c.im.crop((6 * 8, 0, 34 * 8, 28 * 8)), 16, 16), who)
+
+
+def rotated_set(char, deg_steps=16, nframes=2):
+    # Pre-rotated copies of the full-speed run frames for loops: rotation is about the feet anchor, so the game just
+    # places the anchor on the track and picks the frame for the current angle.
+    frames = char["_blur"][:nframes]
+    out = []
+    for k in range(deg_steps):
+        row = []
+        for im, ax, ay in frames:
+            S2 = 2 * max(im.size) + 8
+            cv = Image.new("RGBA", (S2, S2), (0, 0, 0, 0))
+            cv.paste(im, (S2 // 2 - ax, S2 // 2 - ay), im)
+            r = cv.rotate(k * 360 / deg_steps, resample=Image.NEAREST, center=(S2 // 2, S2 // 2))
+            bb = r.getbbox()
+            r = r.crop(bb)
+            row.append(frame5(r, char["_snapped"], S2 // 2 - bb[0], S2 // 2 - bb[1]))
+        out.append(row)
+    return out
+
+
+def build_chars():
+    chars = {}
+    chars["sonic"] = sheet_character("sonic", SONIC_MAP) or procedural_character("sonic")
+    chars["shadow"] = sheet_character("dark", DARK_MAP) or procedural_character("dark")
+    chars["tails"] = procedural_character("tails")
+    chars["knuckles"] = procedural_character("knuckles")
+    src = {}
+    for name, ch in chars.items():
+        ch["rot"] = rotated_set(ch)
+        src[name] = "sheet" if not ch["_snapped"] else "procedural"
+        del ch["_blur"], ch["_snapped"]
+    return chars, src
+
+
+def loop_sprite(R=40, T=12, S=24):
+    # A checkered earth tube (spiral by S px so entry and exit are apart); the part below the ground line is cut away.
+    W = S + 2 * R + 2 * T
+    H = 2 * R + T
+    im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    px = im.load()
+    for k in range(0, 720):
+        phi = k * math.pi / 360
+        cx = T + R + S * phi / (2 * math.pi)
+        for rr in range(R - 1, R + T + 1):
+            x = int(round(cx + rr * math.sin(phi)))
+            y = int(round(R + T + rr * math.cos(phi)))
+            if 0 <= x < W and 0 <= y < H:
+                u = int(phi * R / 12)
+                v = (rr - R) // 6
+                if rr < R + 1 or rr >= R + T:
+                    col = (32, 0, 0)
+                elif rr == R + 1:
+                    col = (224, 160, 32)
+                else:
+                    col = (192, 96, 0) if (u + v) % 2 else (128, 64, 0)
+                    if (u * 7 + rr * 3) % 17 == 0:
+                        col = (96, 32, 0)
+                px[x, y] = col + (255,)
+    for y in range(H):
+        for x in range(W):
+            if px[x, y][3] and y > H - 3:
+                px[x, y] = (0, 0, 0, 0)
+    return run_sprite(im)
+
+
+def log_sprite():
+    im = Image.new("RGBA", (12, 10), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rectangle([0, 1, 11, 8], fill=(160, 96, 0), outline=(64, 32, 0))
+    d.line([(1, 2), (10, 2)], fill=(224, 160, 32))
+    d.line([(1, 7), (10, 7)], fill=(96, 48, 0))
+    d.point((5, 4), fill=(96, 48, 0))
+    return run_sprite(im)
+
+
+def flash_frames():
+    out = []
+    for r in (6, 12, 19, 26):
+        im = Image.new("RGBA", (56, 56), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        d.ellipse([28 - r, 28 - r, 28 + r, 28 + r], outline=(224, 224, 224), width=3)
+        d.ellipse([28 - r + 3, 28 - r + 3, 28 + r - 3, 28 + r - 3], outline=(224, 32, 0), width=2)
+        out.append(run_sprite(im))
+    return out
 
 
 def head_icon(size):
     c = C(40, 44)
     head(c, 22, 15, "open", False, 0)
     return down(c.im.crop((6 * 8, 0, 34 * 8, 28 * 8)), size, size)
-
-
-def life_icon():
-    return run_sprite(head_icon(16))
 
 
 def ring_frames():
@@ -1182,9 +1511,9 @@ def make_font(path, px, colours, outline=0, shadow=None):
 
 
 def main():
-    right, left = sonic_sets()
+    chars, source = build_chars()
     data = {
-        "sonic": right, "sonic_l": left, "life": life_icon(),
+        "chars": chars, "loop": loop_sprite(), "log": log_sprite(), "flash": flash_frames(),
         "ring": ring_frames(), "sparkle": sparkle_frames(),
         "spring_red": spring_frames((224, 32, 0)), "spring_yel": spring_frames((224, 224, 0)),
         "spikes": spikes_sprite(), "monitor": monitor_frames(), "shield": shield_frames(), "sign": sign_frames(),
@@ -1211,7 +1540,7 @@ def main():
         },
     }
     save_bundle("g_sonic.bin", data)
-    print("wrote g_sonic.bin")
+    print("wrote g_sonic.bin; character art:", source)
 
 
 if __name__ == "__main__":

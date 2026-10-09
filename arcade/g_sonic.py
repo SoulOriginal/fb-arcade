@@ -17,12 +17,19 @@ LEFT = (W - VW * PX) // 2 * 2
 S5 = S * PX
 BLACKROW = bytes(S)
 INF = 9999
-YMIN, YMAX, WH, LAVA_Y = 208, 288, 380, 320
+YMIN, YMAX, WH, LAVA_Y = 192, 300, 380, 320
 TILE_ROWS = 64
 FEET_Y = 172
+LOOP_R, LOOP_S = 40, 24
+ITEM_KINDS = ("ring", "shield", "shoes", "invinc", "life")
+ITEM_WEIGHTS = (40, 20, 15, 15, 10)
 
 ZONES = (("ghz", "GREEN HILL", (30, 90, 220)), ("mz", "MARBLE", (130, 40, 160)), ("syz", "SPRING YARD", (40, 70, 170)))
-ACT_TILES = (360, 400, 440, 390, 430, 470, 420, 460, 500)
+ACT_TILES = (820, 860, 840, 880, 850, 900)
+ACTS_PER_ZONE = 2
+CHAR_ORDER = ("sonic", "tails", "knuckles", "shadow")
+CHAR_NAMES = {"sonic": "SONIC", "tails": "TAILS", "knuckles": "KNUCKLES", "shadow": "SHADOW"}
+CHAR_JUMP = {"sonic": 6.5, "tails": 6.5, "knuckles": 6.0, "shadow": 6.5}
 CHAIN_POINTS = (100, 200, 500, 1000)
 START_LIVES = 3
 
@@ -30,7 +37,7 @@ START_LIVES = 3
 ACC, DEC, FRC, TOP = 0.046875, 0.5, 0.046875, 6.0
 ROLL_FRC, ROLL_DEC = 0.0234375, 0.125
 SLOPE, ROLL_UP, ROLL_DOWN = 0.125, 0.078125, 0.3125
-AIR_ACC, GRAV, JUMP, JUMP_CUT = 0.09375, 0.21875, 6.5, -4.0
+AIR_ACC, GRAV, JUMP_CUT = 0.09375, 0.21875, -4.0
 HURT_GRAV = 0.1875
 WAVE = [int(round(1.6 * math.sin(i * math.pi / 16))) for i in range(64)]
 
@@ -41,7 +48,7 @@ def ck(r, g, b):
 
 def draw(rows, spr, x, y, width=VW, left=LEFT):
     # Opaque runs are patched straight into the row buffers; clipping is only computed when the sprite pokes out.
-    w, h, sr = spr
+    w, h, sr = spr[0], spr[1], spr[2]
     if x >= width or x + w <= 0 or y >= len(rows) or y + h <= 0:
         return
     r0, r1 = max(0, -y), min(h, len(rows) - y)
@@ -99,18 +106,21 @@ class Level:
     def __init__(self, zi, act, rng):
         self.zi, self.act, self.rng = zi, act, rng
         self.zone = ZONES[zi][0]
-        self.ntiles = ACT_TILES[zi * 3 + act]
+        self.ntiles = ACT_TILES[zi * ACTS_PER_ZONE + act]
         self.spawns = []
         self.decor = []
         self.build_layout()
-        self.build_arrays()
         self.stages = self.foreground_stages()
 
     # ---- layout ----------------------------------------------------------------------------------
+    # An act is a short run of hand-designed chunks in the idiom of the real zones (opening flat, ramps, summit and
+    # downhill, loop with its run-up ramp, log bridge, wall ledges, enemy gauntlets, pits with choppers, spikes, a spring
+    # pad to a high ledge). The chunk order differs per game; the chunks themselves are fixed designs.
     def build_layout(self):
-        rng, lvl = self.rng, self.zi * 3 + self.act
+        rng, lvl, zone = self.rng, self.zi * 2 + self.act, self.zone
         H, E, dl, sp = [252], [], [], self.spawns
         self.H, self.E, self.dl = H, E, dl
+        self.loops, self.bridges = [], []
 
         def surf(x):
             i, k = int(x) // 16, int(x) % 16
@@ -129,9 +139,9 @@ class Level:
             for _ in range(n):
                 add(0)
 
-        def ring_line(x0, n, y, step=14):
+        def ring_line(x0, n, y, gap=14):
             for i in range(n):
-                sp.append(("ring", x0 + i * step, y))
+                sp.append(("ring", x0 + i * gap, y))
 
         def ring_arc(x0, x1, y, peak, n):
             for i in range(n):
@@ -142,7 +152,6 @@ class Level:
             sp.append((kind, x, 0))
 
         def decorate(t0, t1):
-            zone = self.zone
             t = t0 + rng.randint(0, 2)
             while t < t1 - 1:
                 if dl[t] == 0 and (t + 1 >= len(dl) or dl[t + 1] == 0):
@@ -158,121 +167,182 @@ class Level:
                     self.decor.append((kind, x, H[t]))
                 t += rng.randint(2, 5)
 
-        counts = {"spring": 0}
-        flat(14)
-        while len(dl) < self.ntiles - 26:
-            weights = {"flat": 26, "hill": 22 + (6 if self.zone == "mz" else 0), "pit": 12 + lvl, "ledge": 12,
-                       "spikes": 6 + lvl, "gauntlet": 0 if lvl < 1 else 4 + 2 * lvl,
-                       "spring": 5 if counts["spring"] < 2 else 0, "bump": 14 if self.zone == "syz" else 0}
-            kind = rng.choices(list(weights), list(weights.values()))[0]
+        def foe_pool():
+            pool = ["moto", "moto", "crab"] if lvl >= 1 else ["moto"]
+            return pool + (["buzz"] if lvl >= 2 else [])
+
+        def c_opening():
+            flat(14)
+            ring_line(60, 6, H[-1] - 16)
+            decorate(0, 14)
+
+        def c_hill_ledge():
+            if H[-1] - 36 < YMIN:
+                return False
             t0 = len(dl)
-            if kind == "flat":
-                n = rng.randint(5, 10)
-                flat(n)
-                y = H[t0]
-                if rng.random() < 0.42:
-                    ring_line((t0 + 1) * 16, rng.randint(3, 6), y - 16)
-                if rng.random() < 0.26 + 0.04 * lvl and n >= 7:
-                    pool = ["moto", "moto", "crab"] if lvl >= 1 else ["moto"]
-                    pool += ["buzz"] if lvl >= 2 else []
-                    foe(rng.choice(pool), (t0 + rng.randint(3, n - 2)) * 16)
-                if rng.random() < 0.2 and n >= 7:
-                    sp.append(("monitor", (t0 + n - 2) * 16,
-                               rng.choices(("ring", "shield", "shoes", "invinc", "life"), (40, 20, 15, 15, 10))[0]))
-                decorate(t0, t0 + n)
-            elif kind == "hill":
-                rise = rng.choice((16, 24, 32, 40, 48))
-                sign = 1 if H[-1] - rise >= YMIN else -1
-                if H[-1] + rise > YMAX:
-                    sign = 1
-                steps = []
-                left = rise
-                while left > 0:
-                    d = rng.choice((4, 4, 8)) if left >= 8 else 4
-                    steps.append(d)
-                    left -= d
-                up = [-sign * d for d in steps]
-                down = [sign * d for d in rng.sample(steps, len(steps))]
-                for d in up:
+            for d in (-4, -4, -4, -8, -8, -8):
+                add(d)
+            flat(5)
+            sp.append(("monitor", (len(dl) - 3) * 16, rng.choices(ITEM_KINDS, ITEM_WEIGHTS)[0]))
+            ring_line((len(dl) - 5) * 16, 4, H[-1] - 18)
+            for d in (4, 4, 4, 8, 8, 8):
+                add(d)
+            flat(3)
+            for x in range(t0 * 16 + 8, len(dl) * 16 - 24, 24):
+                sp.append(("ring", x, surf(x) - 24))
+            return True
+
+        def c_summit():
+            if H[-1] - 52 < YMIN:
+                return False
+            t0 = len(dl)
+            for d in (-4, -4, -4, -8, -8, -8, -8, -8):
+                add(d)
+            flat(2)
+            sp.append(("monitor", len(dl) * 16 - 8, rng.choices(ITEM_KINDS, ITEM_WEIGHTS)[0]))
+            for d in (4, 4, 8, 8, 8, 8, 8, 4):
+                add(d)
+            flat(4)
+            for x in range(t0 * 16 + 8, len(dl) * 16 - 24, 20):
+                sp.append(("ring", x, surf(x) - 22))
+            return True
+
+        def c_loop():
+            flat(2)
+            if H[-1] + 48 <= YMAX:
+                for d in (8,) * 6:
                     add(d)
-                flat(rng.randint(0, 3))
-                for d in down:
-                    add(d)
-                flat(2)
-                for i in range(t0 * 16 + 8, len(dl) * 16 - 24, 24):
-                    sp.append(("ring", i, surf(i) - 24))
-                mid = (t0 + len(up) + 1) * 16
-                if rng.random() < 0.3 + 0.03 * lvl and dl[(mid // 16)] == 0:
-                    foe("moto", mid)
-            elif kind == "pit":
-                flat(3)
-                w = rng.randint(3, min(7, 4 + lvl // 2))
-                y = H[-1]
-                x0 = len(dl) * 16
-                for _ in range(w):
-                    add(None)
-                x1 = len(dl) * 16
-                ring_arc(x0 - 16, x1 + 16, y - 10, 46, 7 + w // 2)
-                if self.zone == "ghz" and w >= 4 and rng.random() < 0.6:
-                    sp.append(("chopper", (x0 + x1) // 2, y + 80))
-                flat(3)
-            elif kind == "ledge":
-                flat(3)
-                rise = rng.choice((16, 32, 48))
-                up = H[-1] - rise >= YMIN or H[-1] + rise > YMAX
-                dy = -rise if up else rise
-                step(dy)
-                n = rng.randint(4, 8)
-                flat(n)
-                y = H[-1]
-                ring_line((t0 + 4) * 16, min(n, 5), y - 16)
-                if n >= 6 and rng.random() < 0.5:
-                    foe("moto", (t0 + 3 + n // 2) * 16)
-                decorate(t0 + 3, t0 + 3 + n)
-                step(-dy)
-                flat(3)
-            elif kind == "spikes":
-                flat(3)
-                n = rng.randint(1, 3)
-                x0 = len(dl) * 16
-                y = H[-1]
-                flat(2 * n)
-                sp.append(("spikes", x0, n))
-                ring_arc(x0 - 20, x0 + 32 * n + 20, y - 10, 50, 7)
-                flat(3)
-            elif kind == "gauntlet":
-                flat(14)
-                for off in (3, 7, 11):
-                    pool = ["moto", "crab"] + (["buzz"] if lvl >= 3 else [])
-                    foe(rng.choice(pool), (t0 + off) * 16)
-                ring_line((t0 + 1) * 16, 8, H[t0] - 16)
-                decorate(t0, t0 + 14)
-            elif kind == "spring":
-                counts["spring"] += 1
-                flat(2)
-                y = H[-1]
-                sx = len(dl) * 16 + 8
-                sp.append(("spring", sx, "red"))
-                flat(24)
-                for i in range(9):
-                    sp.append(("ring", sx + 50 + i * 26, y - 20 - 90 * math.sin(math.pi * i / 8)))
-            else:
-                flat(12)
-                for off in (3, 6, 9):
-                    sp.append(("bumper", (t0 + off) * 16 + 8, H[t0] - rng.randint(38, 54)))
-                ring_line((t0 + 1) * 16, 9, H[t0] - 16)
+            flat(2)
+            x0 = len(dl) * 16 + 24
+            flat(8)
+            yg = H[-1]
+            self.loops.append((x0, yg))
+            for k in range(10):
+                phi = k * 2 * math.pi / 10
+                sp.append(("ring", x0 + LOOP_R * math.sin(phi) + LOOP_S * phi / (2 * math.pi), yg - LOOP_R + LOOP_R * math.cos(phi) - 18))
+            flat(5)
+            return True
+
+        def c_bridge():
+            flat(2)
+            x0 = len(dl) * 16
+            for _ in range(8):
+                add(None)
+            x1 = len(dl) * 16
+            self.bridges.append((x0, x1, H[-1]))
+            ring_arc(x0 - 8, x1 + 8, H[-1] - 6, 30, 8)
+            flat(2)
+            return True
+
+        def c_ledge_wall():
+            flat(3)
+            t0 = len(dl)
+            rise = rng.choice((32, 48))
+            up = H[-1] - rise >= YMIN or H[-1] + rise > YMAX
+            dy = -rise if up else rise
+            step(dy)
+            n = rng.randint(5, 8)
+            flat(n)
+            ring_line((t0 + 1) * 16, min(n, 5), H[-1] - 16)
+            if n >= 6:
+                foe("moto", (t0 + 3 + n // 2) * 16)
+            sp.append(("monitor", (t0 + 2) * 16, rng.choices(ITEM_KINDS, ITEM_WEIGHTS)[0]))
+            decorate(t0, t0 + n)
+            step(-dy)
+            flat(3)
+            return True
+
+        def c_gauntlet():
+            t0 = len(dl)
+            flat(18)
+            for off in (4, 9, 14):
+                foe(rng.choice(foe_pool()), (t0 + off) * 16)
+            ring_line((t0 + 1) * 16, 8, H[-1] - 16)
+            decorate(t0, t0 + 18)
+            return True
+
+        def c_pit():
+            flat(3)
+            w = rng.randint(3, 5 + lvl // 3)
+            y = H[-1]
+            x0 = len(dl) * 16
+            for _ in range(w):
+                add(None)
+            x1 = len(dl) * 16
+            ring_arc(x0 - 16, x1 + 16, y - 10, 46, 7 + w // 2)
+            if zone == "ghz" and w >= 4:
+                sp.append(("chopper", (x0 + x1) // 2, y + 80))
+            flat(3)
+            return True
+
+        def c_spikes():
+            flat(3)
+            n = rng.randint(2, 3)
+            x0 = len(dl) * 16
+            y = H[-1]
+            flat(2 * n)
+            sp.append(("spikes", x0, n))
+            ring_arc(x0 - 20, x0 + 32 * n + 20, y - 10, 50, 7)
+            flat(3)
+            return True
+
+        def c_spring():
+            flat(3)
+            sx = len(dl) * 16 + 8
+            sp.append(("spring", sx, "red"))
+            flat(5)
+            up = H[-1] - 48 >= YMIN
+            if up:
+                step(-48)
+            flat(14)
+            sp.append(("monitor", (len(dl) - 7) * 16, rng.choices(ITEM_KINDS, ITEM_WEIGHTS)[0]))
+            for i in range(9):
+                sp.append(("ring", sx + 40 + i * 28, H[-1] - 26 - 90 * math.sin(math.pi * i / 8)))
+            if up:
+                step(48)
+            flat(4)
+            return True
+
+        def c_bumpers():
+            t0 = len(dl)
+            flat(12)
+            for off in (3, 6, 9):
+                sp.append(("bumper", (t0 + off) * 16 + 8, H[t0] - rng.randint(38, 54)))
+            ring_line((t0 + 1) * 16, 9, H[t0] - 16)
+            flat(8)
+            return True
+
+        chunks = {"hill_ledge": c_hill_ledge, "summit": c_summit, "loop": c_loop, "bridge": c_bridge,
+                  "ledge": c_ledge_wall, "gauntlet": c_gauntlet, "pit": c_pit, "spikes": c_spikes, "spring": c_spring,
+                  "bumpers": c_bumpers}
+        must = ["bridge", "spring", "summit"] + (["loop"] if zone != "mz" else ["ledge"])
+        extra = ["gauntlet", "pit", "spikes", "ledge", "hill_ledge", "gauntlet"] + (["bumpers"] if zone == "syz" else [])
+        first = must + extra
+        rng.shuffle(first)
+        second = [n for n in must + extra if n != "bridge"]
+        rng.shuffle(second)
+        plan = first + second
+        c_opening()
+        i = 0
+        while len(dl) < self.ntiles - 26:
+            name = plan[i] if i < len(plan) else rng.choice(extra)
+            i += 1
+            if not chunks[name]():
+                chunks[rng.choice(("gauntlet", "pit", "spikes"))]()
         flat(8)
         self.sign_x = len(dl) * 16 + 8
         sp.append(("sign", self.sign_x, 0))
         flat(16)
         self.L = len(dl) * 16
+        keep_out = [(x0 - 90, x0 + 140) for x0, _ in self.loops] + [(a - 40, b + 40) for a, b, _ in self.bridges]
         mid = len(dl) // 2
-        while not (dl[mid] == 0 and all(d == 0 for d in dl[mid - 2:mid + 3])):
+        while not (dl[mid] == 0 and all(d == 0 for d in dl[mid - 2:mid + 3])
+                   and not any(a < mid * 16 < b for a, b in keep_out)):
             mid += 1
         self.cp_x = mid * 16
-        # Enemies and their shots near a jump are what knocks the bot into the pit, so the approach and the
-        # landing zone of every pit and spike row are kept clear, and so is the start of the act.
-        danger = []
+        # Enemies and their shots near a jump are what knocks the bot into a pit, so the approach and landing zone of
+        # every pit, spike row, loop and bridge are kept clear, and so is the start of the act.
+        danger = list(keep_out)
         for i, d in enumerate(dl):
             if d is None and (i == 0 or dl[i - 1] is not None):
                 j = i
@@ -289,7 +359,13 @@ class Level:
         lava = self.zone == "mz"
         ph, sol = [INF] * L, [WH] * L
         self.pits = []
+        for bx0, bx1, by in self.bridges:
+            for x in range(bx0, bx1):
+                ph[x] = by
+        bridge_tiles = {i for bx0, bx1, _ in self.bridges for i in range(bx0 // 16, bx1 // 16)}
         for i, d in enumerate(dl):
+            if i in bridge_tiles:
+                continue
             if d is None:
                 if not self.pits or self.pits[-1][1] != i * 16:
                     self.pits.append([i * 16, (i + 1) * 16])
@@ -317,20 +393,24 @@ class Level:
     def foreground_stages(self):
         # A generator so the game can build the foreground over several ticks while the title card is shown:
         # doing it at once would be a visible hitch on the Pi.
+        self.build_arrays()
+        yield
         zt = D["zones"][self.zone]
         tiles, fill, lfill = zt["tiles"], zt["fill"], zt["lava_fill"]
         H, dl, L = self.H, self.dl, self.L
         self.rmin = (min(H + self.E) // 16) * 16 - 16
         reps = L // 32 + 1
         fgc = {}
+        self.fgc = fgc
         for wy in range(self.rmin, WH):
             fgc[wy] = bytearray((fill[wy % 32] * reps)[:L * SB])
-        self.fgc = fgc
+            if wy % 50 == 0:
+                yield
         yield
         lava = self.zone == "mz"
         n = len(dl)
-        for part in range(2):
-            for i in range(part * n // 2, (part + 1) * n // 2):
+        for part in range(5):
+            for i in range(part * n // 5, (part + 1) * n // 5):
                 d = dl[i]
                 a, b = i * 16 * SB, (i + 1) * 16 * SB
                 if d is None:
@@ -350,11 +430,13 @@ class Level:
             yield
         sol = self.sol
         togs = [[] for _ in range(WH)]
-        for x in range(1, L):
-            p, q = sol[x - 1], sol[x]
-            if p != q:
-                for wy in range(min(p, q), max(p, q)):
-                    togs[wy].append(x)
+        for x0 in range(1, L, 3000):
+            for x in range(x0, min(L, x0 + 3000)):
+                p, q = sol[x - 1], sol[x]
+                if p != q:
+                    for wy in range(min(p, q), max(p, q)):
+                        togs[wy].append(x)
+            yield
         self.togs = togs
         self.init = [sol[0] <= wy for wy in range(WH)]
         yield
@@ -375,17 +457,19 @@ class Game:
         self.spec = None
         self.level = None
         self.t_act = 0
+        order = list(CHAR_ORDER)
+        self.rng.shuffle(order)
+        self.cast = order + [self.rng.choice(CHAR_ORDER) for _ in ACT_TILES]
 
     # ---- level lifecycle ---------------------------------------------------------------------------
     def load_level(self):
-        zi, act = divmod(self.act_index, 3)
+        zi, act = divmod(self.act_index, ACTS_PER_ZONE)
         self.level = Level(zi, act, self.rng)
         self.zone = self.level.zone
+        self.char = self.cast[self.act_index]
 
     def finish_load(self):
         self.spec = self.bg_spec(self.zone)
-        self.mode = "speed" if self.rng.random() < 0.45 else "collect"
-        self.roll_ok = self.rng.random() < 0.6
         self.checkpoint = False
         self.spawn_objects()
         self.reset_player(40)
@@ -468,10 +552,15 @@ class Game:
         self.steps = 0
         self.air_n = 0
         self.hold_n = 0
-        self.air_cmd = (1, False)
-        self.back = None
-        self.back_t = 0
-        self.back_cd = 300
+        self.air_cmd = (1, False, True)
+        self.in_loop, self.loop_i, self.phi = False, 0, 0.0
+        self.charging, self.charge, self.rev_n = False, 0.0, 0
+        self.flying = self.gliding = self.climbing = False
+        self.fly_t = self.fly_ref = self.climb_t = self.dash_t = 0
+        self.ability_used = self.plan_ability = self.wall_hit = False
+        self.jump = CHAR_JUMP[self.char]
+        self.bridge_w = [0.0] * len(lv.bridges)
+        self.bridge_x = [0.0] * len(lv.bridges)
         self.snap_step = -1
         self.snap = []
         self.sn = 0.0
@@ -538,7 +627,7 @@ class Game:
                 return None, False, ()
             y = float(ph[int(x)])
             sn, cs = lv.sn[int(x)], lv.cs[int(x)]
-            xs, ys = gsx * cs - JUMP * sn, -gsx * sn - JUMP * cs
+            xs, ys = gsx * cs - self.jump * sn, -gsx * sn - self.jump * cs
         else:
             x, y, xs, ys = self.x, self.y, self.xs, self.ys
         foes = [f for f in self.foe_snapshot() if abs(f[0] - x) < 340]
@@ -598,26 +687,43 @@ class Game:
         return f.x, f.y, 15, 8
 
     def bot(self):
-        # returns (direction, jump pressed, jump held, down)
-        if self.hurt or self.dead:
-            return 0, False, False, False
+        # returns (direction, jump pressed, jump held, down, special); special: rev / go (spin dash), ability, flap, cancel
+        idle = (0, False, False, False, None)
+        if self.hurt or self.dead or self.climbing:
+            return idle
         if self.finishing:
-            return (-1 if self.gs > 1.2 else 0), False, False, False
+            return (-1 if self.gs > 1.2 else 0), False, False, False, None
+        if self.in_loop:
+            return 1, False, False, False, None
         if not self.ground:
-            self.air_n += 1
-            if self.air_n % 3 == 1:
-                self.air_cmd = self.plan_air()
-            dirn, cut = self.air_cmd
-            return dirn, False, (not cut) and self.air_n < self.hold_n, False
-        self.air_n = 0
+            return self.bot_air()
+        return self.bot_ground()
+
+    def bot_ground(self):
+        # Always keeps momentum: no momentum means a spin dash, never standing around; hazards get a planned jump,
+        # downhills get a roll, ground enemies get rolled over or jumped on.
         x, gs = self.x, self.gs
-        if self.stall > 300 and abs(gs) < 0.3:
-            return 1, True, True, False
-        back = self.backtrack(x, gs)
-        if back:
-            return back, False, False, False
-        jump = False
+        self.air_n = 0
+        if self.charging:
+            self.rev_n += 1
+            if self.rev_n >= 22:
+                return 0, False, False, False, "go"
+            return 0, False, False, False, "rev" if self.rev_n % 7 == 1 else None
         haz = self.next_hazard(x)
+        jump = False
+        self.plan_ability = False
+        if haz and haz[2] == "wall" and self.char == "knuckles" and 26 < haz[0] - x < 70 and gs > 1.0:
+            # Knuckles reaches ledges by gliding into the wall and climbing it
+            self.hold_n, self.plan_ability = 0, True
+            return 1, True, True, False, None
+        if abs(gs) < 1.2 and not self.rolling:
+            if haz and haz[2] == "wall" and 0 < haz[0] - x < 40:
+                self.hold_n = 999
+                return 1, True, True, False, None
+            if haz and haz[0] - x < 120:
+                return 1, False, True, False, None
+            self.rev_n = 0
+            return 0, False, False, False, "rev"
         if haz and gs > 0.5:
             dist = haz[0] - x
             reach = abs(gs) * 62
@@ -630,47 +736,48 @@ class Game:
                 if not jump and 0 < dist < max(8, gs * 2.5):
                     jump = True
                     self.hold_n = 999
+                if jump and haz[2] == "pit" and self.char != "sonic" and haz[1] - haz[0] >= 64:
+                    self.plan_ability = self.rng.random() < 0.5
         # Rolling into a ground enemy is the second way a player kills it (the first is jumping on it).
         rolling_attack = (gs >= 4 and (haz is None or haz[0] - x > 150)
                           and any(f.alive and f.b == 1 and not f.skip and 20 < f.x - x < 120 for f in self.foes))
         if not jump:
             jump = self.dodge_shot(x) or self.try_attack(x, gs, rolling_attack)
-        if not jump and self.mode == "speed":
-            for o in self.near("spring", x, 60):
-                if 8 < o.x - x < 30 + gs * 4 and o.alive:
-                    jump = True
-                    self.hold_n = 999
+        if not jump and self.stall > 150:
+            jump = True
+            self.hold_n = 999
         down = False
         if not jump and not self.rolling and (haz is None or haz[0] - x > 150):
-            if rolling_attack or (gs > 2.8 and self.sn < -0.1 and self.roll_ok):
+            if rolling_attack or (gs > 2.5 and self.sn < -0.06):
                 down = True
-        return 1, jump, True, down
+        return 1, jump, True, down, None
 
-    def backtrack(self, x, gs):
-        # A collecting player turns round for a ring line that was jumped over; the braking shows the skid frames.
-        if self.back_cd > 0:
-            self.back_cd -= 1
-        if self.back is not None:
-            self.back_t += 1
-            if (x <= self.back or self.back_t > 240 or self.rolling or self.hurt
-                    or any(f.alive and abs(f.x - x) < 160 for f in self.foes)):
-                self.back, self.back_cd = None, 900
-                self.stall, self.best_x = 0, x
-                return 0
-            return -1
-        if self.mode != "collect" or self.back_cd > 0 or self.rolling or gs < 2.0 or self.steps % 15:
-            return 0
-        rings = [r for r in self.near("ring", x - 100, 75) if r.alive and abs(r.y - (self.y - 16)) < 24 and x - 175 < r.x < x - 25]
-        if len(rings) < 3:
-            return 0
-        target = min(r.x for r in rings) - 8
-        blocked = any(h[1] > target - 60 and h[0] < x + 30 for h in self.hazards[max(0, bisect_right(self.haz_x, target - 400)):
-                                                                                bisect_right(self.haz_x, x + 30)])
-        crowded = any(self.near(k, (target + x) / 2, (x - target) / 2 + 40) for k in ("bumper", "spring", "spikes", "monitor"))
-        if blocked or crowded or any(f.alive and abs(f.x - x) < 200 for f in self.foes):
-            return 0
-        self.back, self.back_t = target, 0
-        return -1
+    def bot_air(self):
+        self.air_n += 1
+        special = None
+        if self.flying:
+            # hold altitude until the hazard is behind, then let go and land
+            if self.past_hazard():
+                special = "cancel"
+            elif self.y > self.fly_ref:
+                special = "flap"
+            return 1, False, False, False, special
+        if self.gliding or self.dash_t > 0:
+            if self.gliding and self.past_hazard():
+                special = "cancel"
+            return 1, False, False, False, special
+        if self.air_n % 3 == 1:
+            self.air_cmd = self.plan_air()
+        dirn, cut, ok = self.air_cmd
+        if self.char != "sonic" and not self.ability_used and self.air_n > 5:
+            h = self.next_hazard(self.x)
+            if (not ok and h is not None and h[2] == "pit") or (self.plan_ability and self.air_n > 8 and self.ys > -1.5):
+                special = "ability"
+        return dirn, False, (not cut) and self.air_n < self.hold_n, False, special
+
+    def past_hazard(self):
+        h = self.next_hazard(self.x - 30)
+        return (h is None or h[0] > self.x + 200) and self.level.ph[int(self.x)] < INF
 
     def dodge_shot(self, x):
         for s in self.dyn:
@@ -701,14 +808,16 @@ class Game:
     def plan_air(self):
         # Re-planned every few steps because a bounce off an enemy or a bumper changes the arc mid-air.
         for dirn in (1, 0, -1):
+            if dirn != 1 and abs(self.xs) < 2.5:
+                continue  # braking only makes sense with speed to shed; otherwise it just stalls in front of the hazard
             for cut in (False, True):
                 if cut and not (self.jumped and self.ys < JUMP_CUT):
                     continue
                 remaining = 0 if cut else max(0, self.hold_n - self.air_n)
                 lx, _, path = self.sim(remaining, 0, dirn)
                 if self.landing_safe(lx) and not self.spikes_hit(path):
-                    return dirn, cut
-        return 1, False
+                    return dirn, cut, True
+        return 1, False, False
 
     def try_attack(self, x, gs, rolling_attack):
         for fx, fvx, fy, fw, fh, f in self.foe_snapshot():
@@ -733,28 +842,46 @@ class Game:
         return self.stat[kind][bisect_left(xs, x - r):bisect_right(xs, x + r)]
 
     # ---- physics ------------------------------------------------------------------------------------
-    def physics(self, dirn, jump_press, jump_held, down):
+    def physics(self, dirn, jump_press, jump_held, down, special):
         if self.dead:
             self.ys = min(self.ys + GRAV, 16)
             self.y += self.ys
             self.dead_t += 1
             return
-        if self.hurt:
+        if self.in_loop:
+            self.loop_step()
+        elif self.climbing:
+            self.climb_step()
+        elif self.hurt:
             self.hurt_step()
         elif self.ground:
-            self.ground_step(dirn, jump_press, down)
+            self.ground_step(dirn, jump_press, down, special)
         else:
-            self.air_step(dirn, jump_held)
+            self.air_step(dirn, jump_held, special)
         self.check_bounds()
 
-    def ground_step(self, dirn, jump_press, down):
+    def ground_step(self, dirn, jump_press, down, special):
         lv = self.level
         ix = int(self.x)
         sn, cs = lv.sn[ix], lv.cs[ix]
         self.sn = sn
         gs = self.gs
+        if self.charging:
+            # spin dash: the revs build up the launch speed (8 to 12), release rolls away
+            if special == "rev":
+                self.charge = min(self.charge + 2.0, 8.0)
+            elif special == "go":
+                self.gs = (8 + int(self.charge / 2)) * self.facing
+                self.charging, self.rolling = False, True
+            self.charge = max(0.0, self.charge - 0.1)
+            if self.steps % 5 == 0:
+                self.dyn.append(O("dust", self.x - self.facing * 8, self.y))
+            return
+        if special == "rev" and abs(gs) < 0.5 and not self.rolling:
+            self.charging, self.charge = True, 2.0
+            return
         if jump_press:
-            self.xs, self.ys = gs * cs - JUMP * sn, -gs * sn - JUMP * cs
+            self.xs, self.ys = gs * cs - self.jump * sn, -gs * sn - self.jump * cs
             self.ground, self.jumped, self.rolling = False, True, False
             self.air_n = 0
             return
@@ -818,12 +945,84 @@ class Game:
             self.ground, self.jumped = False, False
             self.x = nx
         else:
+            old = self.x
             self.x, self.y = nx, float(gy)
+            for i, (x0, yg) in enumerate(lv.loops):
+                if old < x0 <= nx and gs >= 4.2 and abs(self.y - yg) < 5:
+                    self.in_loop, self.loop_i, self.phi = True, i, 0.0
+                    self.rolling, self.facing = False, 1
+                    break
 
-    def air_step(self, dirn, jump_held):
+    def loop_step(self):
+        # Ground speed carries Sonic round a circle of radius LOOP_R; the circle drifts LOOP_S px right so that the
+        # exit is clear of the entry. Rotation of the ground path is shown by pre-rotated sprites.
+        x0, yg = self.level.loops[self.loop_i]
+        self.phi += self.gs / LOOP_R
+        if self.phi >= 2 * math.pi:
+            self.in_loop = False
+            self.x, self.y = x0 + LOOP_S + 1.0, float(yg)
+            return
+        self.x = x0 + LOOP_R * math.sin(self.phi) + LOOP_S * self.phi / (2 * math.pi)
+        self.y = yg - LOOP_R + LOOP_R * math.cos(self.phi)
+
+    def start_ability(self):
+        if self.ability_used or self.char == "sonic":
+            return
+        self.ability_used = True
+        self.jumped = False
+        if self.char == "tails":
+            self.flying, self.fly_t, self.fly_ref = True, 0, self.y
+            self.ys = min(self.ys, -1.5)
+        elif self.char == "knuckles":
+            self.gliding = True
+            self.xs, self.ys = 4.0 * self.facing, 0.5
+        else:
+            self.dash_t = 20
+            self.xs, self.ys = 9.0 * self.facing, 0.0
+            self.dyn.append(O("flash", self.x, self.y - 20))
+
+    def climb_step(self):
         lv = self.level
+        self.climb_t += 1
+        self.y -= 1.0
+        top = lv.ph[min(int(self.x + self.facing * 9) + 6, lv.L - 1)]
+        if self.y <= top + 1:
+            self.climbing = False
+            self.x += self.facing * 14
+            self.y = float(lv.ph[int(self.x)])
+            self.ground, self.gs = True, 2.0 * self.facing
+        elif self.climb_t > 150:
+            self.climbing = False
+
+    def air_step(self, dirn, jump_held, special):
         xs, ys = self.xs, self.ys
-        if self.jumped and not jump_held and ys < JUMP_CUT:
+        if special == "ability":
+            self.start_ability()
+            xs, ys = self.xs, self.ys
+        elif special == "cancel":
+            self.flying = self.gliding = False
+        grav = GRAV
+        if self.dash_t > 0:
+            self.dash_t -= 1
+            self.move_air(9.0 * self.facing, 0.0, 0.0)
+            if self.wall_hit:
+                self.dash_t = 0
+            return
+        if self.gliding:
+            xs = self.facing * min(abs(xs) + 0.04, 8.0)
+            self.move_air(xs, 0.5, 0.0)
+            if self.wall_hit:
+                self.gliding, self.climbing, self.climb_t = False, True, 0
+                self.xs = self.ys = 0.0
+            return
+        if self.flying:
+            self.fly_t += 1
+            grav = 0.03125
+            if special == "flap":
+                ys = min(ys, -1.0)
+            if self.fly_t > 300:
+                self.flying = False
+        elif self.jumped and not jump_held and ys < JUMP_CUT:
             ys = JUMP_CUT
         if dirn > 0:
             self.facing = 1
@@ -835,15 +1034,17 @@ class Game:
                 xs = max(xs - AIR_ACC * (self.acc / ACC), -self.top)
         if -4 < ys < 0 and abs(xs) >= 0.125:
             xs -= int(xs / 0.125) / 256
-        self.move_air(xs, ys, GRAV)
+        self.move_air(xs, ys, grav)
 
     def move_air(self, xs, ys, grav):
         lv = self.level
         nx, ny = self.x + xs, self.y + ys
+        self.wall_hit = False
         if xs:
             px = int(nx + (7 if xs > 0 else -7))
             if 0 <= px < lv.L and lv.ph[px] < INF and lv.ph[px] < ny - 14:
                 nx, xs = self.x, 0.0
+                self.wall_hit = True
         nx = max(10.0, min(lv.L - 10.0, nx))
         vy = ys
         self.xs, self.ys = xs, min(ys + grav, 16.0)
@@ -852,6 +1053,23 @@ class Game:
             gy = lv.ph[int(nx)]
             if gy < INF and ny >= gy and ny - gy <= 20 + vy:
                 self.land(gy, vy)
+
+    def update_bridges(self):
+        # Log bridges sag under Sonic: the heightfield columns of the span are lowered around his position.
+        ph = self.level.ph
+        for i, (x0, x1, base) in enumerate(self.level.bridges):
+            on = self.ground and x0 <= self.x < x1
+            w = self.bridge_w[i]
+            if not on and w < 0.01:
+                continue
+            w += ((1.0 if on else 0.0) - w) * 0.12
+            self.bridge_w[i] = w
+            if on:
+                self.bridge_x[i] = self.x
+            half = (x1 - x0) / 2
+            sx = self.bridge_x[i]
+            for x in range(x0, x1):
+                ph[x] = base + int(8 * w * max(0.0, 1 - abs(x - sx) / half))
 
     def land(self, gy, vy):
         lv = self.level
@@ -862,6 +1080,9 @@ class Game:
         self.gs = self.xs if abs(sn) < 0.2 else self.xs * cs - vy * sn
         self.jumped = self.spring_air = False
         self.rolling = False
+        self.flying = self.gliding = self.climbing = False
+        self.dash_t = 0
+        self.ability_used = False
         self.chain = 0
         self.hold_n = 0
         if self.hurt:
@@ -944,7 +1165,7 @@ class Game:
 
     def interact(self):
         x, y = self.x, self.y
-        ball = self.jumped or self.rolling
+        ball = self.jumped or self.rolling or self.gliding or self.dash_t > 0 or self.charging
         top = y - (24 if ball else 34)
         cy = y - (12 if ball else 17)
         for r in self.near("ring", x, 14):
@@ -989,7 +1210,7 @@ class Game:
                 o.t = 8
                 ang = math.atan2(dy, dx)
                 vx, vy = 7 * math.cos(ang), 7 * math.sin(ang)
-                self.xs, self.ys = max(vx, 2.0), min(vy, -3.0)
+                self.xs, self.ys = max(vx, 4.5), min(vy, -4.0)
                 self.ground, self.jumped, self.rolling = False, True, False
                 self.hold_n = 0
                 self.add_score(10)
@@ -1110,7 +1331,7 @@ class Game:
                 o.y -= 0.7 if o.t < 24 else 0
                 if o.t > 50:
                     o.alive = False
-            elif k == "puff" and o.t > 24:
+            elif k == "puff" and o.t > 24 or k == "flash" and o.t > 12:
                 o.alive = False
             elif k == "dust" and o.t > 18:
                 o.alive = False
@@ -1144,8 +1365,9 @@ class Game:
                 self.t_act += 1
         if self.sign_t >= 0:
             self.sign_t += 1
-        dirn, jp, jh, down = self.bot()
-        self.physics(dirn, jp, jh, down)
+        dirn, jp, jh, down, special = self.bot()
+        self.physics(dirn, jp, jh, down, special)
+        self.update_bridges()
         if not self.dead:
             self.interact()
         self.update_foes()
@@ -1162,7 +1384,7 @@ class Game:
         self.update_camera()
         if self.x > self.best_x + 2:
             self.best_x, self.stall = self.x, 0
-        elif not self.finishing and self.back is None:
+        elif not self.finishing:
             self.stall += 1
         if self.stall > 420:
             self.unstick()
@@ -1179,49 +1401,58 @@ class Game:
         self.ground, self.rolling, self.jumped, self.hurt = True, False, False, False
         self.stall = 0
         self.best_x = self.x
-        self.back = None
 
     # ---- rendering ---------------------------------------------------------------------------------------
-    def sonic_sprite(self):
-        # Animation speed follows ground speed as in the original: the faster, the shorter each frame.
+    def sprite(self):
+        # Pose selection for the current character. Animation speed follows ground speed as in the original: the
+        # faster he moves, the shorter each frame.
+        ch = D["chars"][self.char]
+        side = ch["R" if self.facing > 0 else "L"]
         gs = abs(self.gs)
-        if self.dead or self.hurt:
-            pose, i = "hurt", 0
-        elif not self.ground:
+
+        def pick(pose, rate):
+            self.anim += rate
+            fr = side.get(pose) or side["idle"]
+            return fr[int(self.anim) % len(fr)]
+        if self.dead:
+            return side["death"][0]
+        if self.hurt:
+            return side["hurt"][(self.tick // 8) % len(side["hurt"])]
+        if self.in_loop:
+            k = int(round(math.degrees(self.phi) / 22.5)) % 16
+            return ch["rot"][k][self.tick % len(ch["rot"][k])]
+        if self.climbing:
+            return pick("climb", 0.12)
+        if self.gliding:
+            return pick("glide", 0.2)
+        if self.flying:
+            return pick("fly", 0.5)
+        if self.dash_t > 0:
+            return pick("blur", 0.8)
+        if self.charging:
+            return pick("ball", 0.7)
+        if not self.ground:
             if self.spring_air and self.ys < 0:
-                pose, i = "spring", 0
-            elif self.spring_air:
-                pose, i = "walk", 0
-            else:
-                pose = "ball"
-                self.anim += 0.5
-                i = int(self.anim) % 4
-        elif self.rolling:
-            pose = "ball"
-            self.anim += 2 / max(1.5, 5 - gs)
-            i = int(self.anim) % 4
-        elif self.skid:
-            pose = "skid"
-            self.anim += 0.2
-            i = int(self.anim) % 2
-        elif gs < 0.1:
+                return side["spring"][0]
+            if self.spring_air:
+                return pick("walk", 0.0)
+            return pick("ball", 0.5)
+        if self.rolling:
+            return pick("ball", 2 / max(1.5, 5 - gs))
+        if self.skid:
+            return pick("skid", 0.2)
+        if gs < 0.1:
             if self.finishing and self.idle_n < 90:
-                pose = "wave"
-                self.anim += 0.12
-                i = int(self.anim) % 3
-            elif self.idle_n < 90:
-                pose, i = "idle", 0
-            else:
-                n = self.idle_n - 90
-                pose, i = "wait", (0 if n < 60 else 1 + (n // 14) % 2)
-        elif gs < 5.8:
-            self.anim += 2 / max(2.5, 9 - gs)
-            pose, i = ("walk", int(self.anim) % 6) if gs < 3.2 else ("run", int(self.anim) % 4)
-        else:
-            pose = "blur"
-            self.anim += 0.8
-            i = int(self.anim) % 3
-        return D["sonic" if self.facing > 0 else "sonic_l"][pose][i]
+                return pick("wave", 0.12)
+            if self.idle_n < 90:
+                return side["idle"][0]
+            n = self.idle_n - 90
+            return pick("wait", 0.0 if n < 60 else 0.15) if n >= 60 else side["wait"][0]
+        if gs < 3.2:
+            return pick("walk", 2 / max(2.5, 9 - gs))
+        if gs < 5.8:
+            return pick("run", 2 / max(2.5, 9 - gs))
+        return pick("blur", 0.8)
 
     def build_bg(self, camx, camy):
         spec = self.spec
@@ -1271,6 +1502,16 @@ class Game:
             fr = dec[o.k]
             spr = fr[((t // 12) + o.a) % len(fr)]
             draw(rows, spr, int(o.x - camx) - spr[0] // 2, int(o.y - camy) - spr[1] + 1)
+        for x0, yg in lv.loops:
+            if camx - 140 < x0 < camx + VW + 140:
+                draw(rows, D["loop"], int(x0 - LOOP_R - 12 - camx), int(yg - 2 * LOOP_R - 12 - camy))
+        for i, (x0, x1, base) in enumerate(lv.bridges):
+            if camx - 20 < x1 and x0 < camx + VW + 20:
+                w, half = self.bridge_w[i], (x1 - x0) / 2
+                sx = self.bridge_x[i]
+                for lx in range(x0, x1, 12):
+                    sag = int(8 * w * max(0.0, 1 - abs(lx + 6 - sx) / half))
+                    draw(rows, D["log"], int(lx - camx), int(base + sag - 1 - camy))
         for o in self.near_range("spikes", camx - 100, camx + VW + 10):
             for i in range(o.a):
                 draw(rows, D["spikes"], int(o.x - camx) + 32 * i, int(o.y - camy) - 16)
@@ -1331,12 +1572,14 @@ class Game:
                 draw(rows, D["monitor"]["icons"][o.a], sx - 7, sy - 7)
             elif k == "dust":
                 draw(rows, D["dust"][min(3, o.t // 5)], sx - 7, sy - 12)
+            elif k == "flash":
+                draw(rows, D["flash"][min(3, o.t // 3)], sx - 28, sy - 28)
             elif k == "puff":
                 draw(rows, D["puff"][min(2, o.t // 8)], sx - 5, sy - 5)
         if not (self.inv > 0 and not self.hurt and self.tick % 2):
-            spr = self.sonic_sprite()
+            spr = self.sprite()
             sx, sy = int(self.x - camx), int(self.y - camy)
-            draw(rows, spr, sx - 17, sy - 38)
+            draw(rows, spr, sx - spr[3], sy - spr[4])
             if self.shield and not self.dead:
                 draw(rows, D["shield"][t % 2], sx - 22, sy - 42)
             if self.invinc_t > 0:
@@ -1357,8 +1600,8 @@ class Game:
         put_text(rows, "%d:%02d" % (secs // 60, secs % 60), 64, 24, "S", "white")
         put_text(rows, "RINGS", 16, 40, "S", "red" if blink else "yellow")
         put_text(rows, "%d" % self.rings, 96 - text_width("%d" % self.rings, "S"), 40, "S", "white")
-        draw(rows, D["life"], 10, 190)
-        put_text(rows, "SONIC", 30, 190, "S", "yellow")
+        draw(rows, D["chars"][self.char]["icon"], 10, 190)
+        put_text(rows, CHAR_NAMES[self.char], 30, 190, "S", "yellow")
         put_text(rows, "X %d" % self.lives, 34, 201, "S", "white")
 
     def flush(self, rows):
@@ -1392,7 +1635,7 @@ class Game:
             fill_span(rows, cx - hw, cy + r, 2 * hw + 1, 1, col)
 
     def render_card(self, t):
-        zi, act = divmod(self.act_index, 3)
+        zi, act = divmod(self.act_index, ACTS_PER_ZONE)
         name = ZONES[zi][1]
         rows = self.black_rows()
         if t < 16:
@@ -1416,13 +1659,18 @@ class Game:
         put_text(rows, "ACT", 60 - text_width("ACT", "M") // 2 + off, 138, "M", "white")
         num = "%d" % (act + 1)
         put_text(rows, num, 60 - text_width(num, "L") // 2 + off, 152, "L", "white")
-        draw(rows, D["sonic"]["wave"][(t // 6) % 3], 240 + off, 150)
+        who = D["chars"][self.char]["R"]
+        spr = who["wave"][(t // 6) % len(who["wave"])]
+        draw(rows, spr, 258 + off - spr[3], 182 - spr[4])
+        player = CHAR_NAMES[self.char]
+        put_text(rows, player, 250 + off - text_width(player, "M") // 2, 186, "M", "yellow")
         self.flush(rows)
 
     def render_results(self, t):
-        zi, act = divmod(self.act_index, 3)
+        zi, act = divmod(self.act_index, ACTS_PER_ZONE)
         rows = self.black_rows()
-        put_text(rows, "SONIC HAS", 160 - text_width("SONIC HAS", "L") // 2, 22, "L", "white")
+        who = "%s HAS" % CHAR_NAMES[self.char]
+        put_text(rows, who, 160 - text_width(who, "L") // 2, 22, "L", "white")
         put_text(rows, "PASSED", 130 - text_width("PASSED", "L") // 2, 54, "L", "white")
         self.disc(rows, 266, 82, 28, ck(224, 224, 224))
         self.disc(rows, 266, 82, 25, ck(224, 0, 0))
@@ -1504,7 +1752,7 @@ class Game:
         self.render_results(t)
         if t > 150 and self.time_bonus_left == 0 and self.ring_bonus_left == 0:
             self.act_index += 1
-            if self.act_index >= 9:
+            if self.act_index >= len(ACT_TILES):
                 clear()
                 self.finish("COURSE CLEAR")
             else:
