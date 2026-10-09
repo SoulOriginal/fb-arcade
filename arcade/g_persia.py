@@ -5,17 +5,19 @@ import math
 
 B = load_bundle("g_persia.bin")
 SPR, TILES, MISC, HUD, META = B["spr"], B["tiles"], B["misc"], B["hud"], B["meta"]
+THEME_DENSITY = {1: .18, 2: .22, 3: .24, 4: .2, 5: .26, 6: .26, 7: .22, 8: .24, 9: .26, 10: .28, 11: .24, 12: .28}
+GUARD_PAL = {1: "g_blue", 2: "g_red", 3: "g_dark", 4: "g_gold", 5: "g_blue", 6: "g_green", 7: "g_red", 8: "g_gold", 9: "g_dark",
+             10: "g_blue", 11: "g_red", 12: "g_dark"}
 HANG_H = B["hang_h"]
 
 SC = 5                  # screen pixels per logical pixel
 OX = 160                # left margin: 320 logical px * 5 = 1600 of the 1920 screen
-TW, TH, FEET = 32, 63, 54
+TW, TH, FEET = 32, 63, 44
 SCR_W, SCR_H = 10, 3    # tiles per screen, as in the original
 LW, LH = SCR_W * TW, SCR_H * TH
 HUD_Y = LH * SC
 GRAVITY, TERMINAL = 1.3, 19.0
 GATE_OPEN_TICKS = 300
-TICKS_PER_GAME_SECOND = 5.0     # 30 ticks/s * 1/6: the 60 minute clock runs 6x faster than real time
 GAME_MINUTES = 60
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -26,29 +28,46 @@ GAME_MINUTES = 60
 # ---------------------------------------------------------------------------------------------------------------
 E3 = ".........."
 TEMPLATES = {
+    # rooms and corridors
     "start": [E3, E3, "#@#T####T#"],
-    "exit": [E3, E3, "###T#E##T#"],
+    "start_hall": [E3, E3, "#@P##T##T#"],
     "plain": [E3, E3, "#P#####P##"],
-    "plain_torch": ["..###.....", E3, "##T####T##"],
+    "torches": [E3, E3, "##T####T##"],
+    "hall": [E3, E3, "#T##P##T##"],
+    "colonnade": [E3, E3, "P##P##P##P"],
+    # gaps, spikes, loose floors, chompers
     "gap1": [E3, E3, "###T.#####"],
     "gap2": [E3, E3, "##T..#####"],
     "gap3": [E3, E3, "##T...####"],
     "spike1": [E3, E3, "###^#T####"],
     "spike2": [E3, E3, "#T^###^###"],
     "spike3": [E3, E3, "##T^^#####"],
+    "spike4": [E3, E3, "#^##^##^##"],
     "loose1": [E3, E3, "##==.==###"],
     "loose2": [E3, E3, "##=#=#=T##"],
+    "loose4": [E3, E3, "#=#=#=#=##"],
     "chomp1": [E3, E3, "##T#V#####"],
     "chomp2": [E3, E3, "##V###V###"],
     "chomp_spike": [E3, E3, "##V##^T###"],
+    # ledges, hills, bridges
+    "hill": [E3, "..######..", "##XXXXXX##"],
+    "hill_torch": [E3, "..#T####..", "##XXXXXX##"],
+    "hill_guard": [E3, "..#1####..", "##XXXXXX##"],
+    "bridge": [E3, "..######..", "##......##"],
+    "bridge_gap": [E3, "..###.###.", "##......##"],
     "wall1": [E3, "...####...", "###XXXX###"],
     "wall_sword": [E3, "...S###...", "###XXXX###"],
     "wall_potion": [E3, "...H###...", "###XXXX###"],
     "ledge_potion": [E3, ".#H#......", "##########"],
+    # gates and plates
     "plate1": [E3, E3, "#a####A###"],
     "plate_gate2": [E3, E3, "##a#.#A###"],
     "plate_up": [E3, "...#a##...", "###XXXX#A#"],
+    "double_gate": [E3, E3, "#a#A##b#B#"],
     "exitplate": [E3, E3, "####e#T###"],
+    "exit": [E3, E3, "###T#E##T#"],
+    "exit_hall": [E3, E3, "##T#E#T###"],
+    # opponents and events
     "guard1": [E3, E3, "##h#T##1##"],
     "guard2": [E3, E3, "####1..###"],
     "guard_fat": [E3, E3, "##h#T#3###"],
@@ -59,23 +78,35 @@ TEMPLATES = {
     "poison": [E3, E3, "##z###h###"],
 }
 
-# Curated progression: a name is fixed, a tuple is a random choice, so each game differs but every level keeps its gimmick.
+
+
+def lift(rows):
+    """Authoring is done on a ground row; the playable floor is lifted one row so a solid masonry mass fills the row below it
+    (rooms stand on heavy stone, pits become dark shafts between wall masses)."""
+    ground = rows[2]
+    mass = "".join("." if ch in ".=" else "X" for ch in ground)
+    return [rows[1], rows[2], mass]
+
+
+TEMPLATES = {name: lift(rows) for name, rows in TEMPLATES.items()}
+
+# Every level is hand-assembled: fixed slots keep its landmark screens, tuples are per-game variations.
 RECIPES = {
-    1: ["start", "wall_sword", "guard1", "exit"],
-    2: ["start", ("gap1", "spike1"), "plate1", ("guard1", "guard2"), "exit"],
-    3: ["start", ("spike2", "gap2"), "skeleton", "exitplate", "exit"],
-    4: ["start", "mirror", ("chomp1", "spike1"), "plate_up", "guard1", "exit"],
-    5: ["start", ("gap2", "loose1"), ("wall1", "ledge_potion"), ("guard2", "guard1"), "exitplate", "exit"],
-    6: ["start", ("chomp2", "spike2"), "plate_gate2", ("guard2", "guard_fat"), "exit"],
-    7: ["start", ("gap3", "spike3"), "wall_potion", "chomp2", ("guard2", "guard_fat"), "exitplate", "exit"],
-    8: ["start", ("gap2", "loose1"), "plate_up", ("guard_fat", "guard2"), ("chomp_spike", "spike2"), "exit"],
-    9: ["start", "spike3", ("chomp2", "plate_gate2"), ("guard_fat", "guard2"), ("loose1", "gap3"), "exitplate", "exit"],
-    10: ["start", ("chomp_spike", "gap3"), "plate_up", "guard_fat", ("spike3", "chomp2"), "exit"],
-    11: ["start", ("gap3", "loose1"), "plate_gate2", "guard_fat", "chomp_spike", "guard2", "exitplate", "exit"],
-    12: ["start", "gap3", "shadow_merge", ("chomp2", "spike3"), "plate_up", "vizier", "exit"],
+    1: ["start", "torches", ("gap1", "hill"), "spike1", "wall_sword", "hall", "guard1", "exit_hall"],
+    2: ["start", "plain", ("gap2", "spike2"), "plate1", "hill_torch", ("spike4", "gap1"), "plate_gate2", "guard1", "exit"],
+    3: ["start", "hall", ("spike3", "loose1"), "hill", "skeleton", "torches", "bridge_gap", "exitplate", "exit"],
+    4: ["start", "colonnade", "mirror", "plain", "chomp1", "plate_up", "spike2", "guard1", "exit_hall"],
+    5: ["start", "chomp1", "chomp2", "loose1", "hill", "chomp_spike", "loose4", "guard2", "exitplate", "exit"],
+    6: ["start", "plain", "bridge", "ledge_potion", "wall_potion", "bridge_gap", "poison", "hill", "guard_fat", "exit"],
+    7: ["start", "colonnade", "guard2", "gap3", "hill_guard", "plate_gate2", "guard1", "spike3", "exit"],
+    8: ["start", "plate_up", "guard_fat", "chomp2", "loose1", "bridge_gap", "guard2", "double_gate", "exitplate", "exit"],
+    9: ["start", "spike4", "chomp2", "bridge", "spike3", "guard_fat", "chomp_spike", "hill", "guard2", "exit"],
+    10: ["start", "gap3", "guard2", "chomp_spike", "plate_gate2", "guard_fat", "loose4", "hill_guard", "guard1", "exit_hall"],
+    11: ["start", "gap3", "double_gate", "guard_fat", "chomp_spike", "bridge_gap", "guard2", "spike3", "guard_fat", "exitplate", "exit"],
+    12: ["start", "gap3", "shadow_merge", "chomp2", "spike3", "plate_up", "hall", "vizier", "exit"],
 }
 LEVELS = 12
-THEME_OF = lambda n: "dungeon" if n <= 3 else "palace"
+PLATE_SETS = "abcd"
 
 
 def make_rows(n):
@@ -83,9 +114,15 @@ def make_rows(n):
     for item in RECIPES[n]:
         names.append(random.choice(item) if isinstance(item, tuple) else item)
     rows = ["", "", ""]
-    for nm in names:
+    for k, nm in enumerate(names):
+        # Gates and plates are paired per screen: rotating the letters keeps one screen's plate from opening another's gate.
+        sh = k % 4
+        table = {}
+        for i, ch in enumerate(PLATE_SETS):
+            table[ord(ch)] = PLATE_SETS[(i + sh) % 4]
+            table[ord(ch.upper())] = PLATE_SETS[(i + sh) % 4].upper()
         for r in range(3):
-            rows[r] += TEMPLATES[nm][r]
+            rows[r] += TEMPLATES[nm][r].translate(table)
     return rows, names
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -124,7 +161,7 @@ class Slab:
 class World:
     def __init__(self, n, rows=None):
         self.n = n
-        self.theme = THEME_OF(n)
+        self.theme = n
         self.rows = rows
         self.w, self.h = len(rows[0]), len(rows)
         self.t = [list(r) for r in rows]
@@ -176,7 +213,8 @@ class World:
         self.var = {}
         for y in range(self.h):
             for x in range(self.w):
-                self.var[(x, y)] = 3 if (x * 5 + y * 3 + n * 7) % 9 == 0 else (x + y * 2 + n) % 3
+                hsh = (x * 7919 + y * 104729 + n * 15485863) % 1000
+                self.var[(x, y)] = (1 + hsh % 2) if hsh < THEME_DENSITY[n] * 600 else 0
         self.shown = {}
         self.bloody = set()
 
@@ -222,9 +260,11 @@ class World:
         v = self.var[(x, y)]
         s = "_%d" % v
         if c == ".":
-            return ("pit" if y == self.h - 1 else "empty") + s, 0
+            if all(self.t[k][x] == "." for k in range(y, self.h)):
+                return ("pit" if y == self.h - 1 else "shaft") + s, 0
+            return "empty" + s, 0
         if c == "X":
-            return "block" + s, 0
+            return ("block" if self.kind(x + 1, y) == "X" else "blockr") + s, 0
         if c == "#":
             it = self.items.get((x, y))
             if it:
@@ -256,6 +296,10 @@ class World:
             return "mirror" + s, 1 if self.mirror[(x, y)] else 0
         return "floor" + s, 0
 
+    def has_under(self, x, y):
+        """True when a ledge (or the ceiling, on the top row) sits right above: its thick brick face hangs into the cell."""
+        return (y == 0 or self.kind(x, y - 1) in FLOOR_CH) and self.t[y][x] not in "XABCDVEM"
+
     def chomp_img(self, x, y):
         if (x, y) in self.bloody:
             return 5
@@ -267,7 +311,11 @@ class World:
 
     def tile_rows(self, x, y):
         name, st = self.cell(x, y)
-        return TILES[self.theme][name][st]
+        rows = TILES[self.theme][name][st]
+        if self.has_under(x, y):
+            under = TILES[self.theme]["under"][0]
+            rows = under + rows[len(under):]
+        return rows
 
     # ---- per tick dynamics ----
     def update(self, actors):
@@ -341,12 +389,12 @@ class World:
                     self.slabs.append(Slab(pos[0] * TW + 16, pos[1] * TH + SLAB_TOP))
         for sl in self.slabs:
             sl.vy = min(22.0, sl.vy + 1.1)
-            old_bottom = sl.y + 13
+            old_top = sl.y
             sl.y += sl.vy
-            bottom = sl.y + 13
+            bottom = sl.y + SLAB_H
             tx = int(sl.x // TW)
-            r = int((old_bottom - SLAB_TOP) // TH) + 1
-            if bottom >= r * TH + SLAB_TOP + 3 and r < self.h and self.has_floor(tx, r):
+            r = int((old_top - SLAB_TOP) // TH) + 1
+            if sl.y >= r * TH + SLAB_TOP - 6 and r < self.h and self.has_floor(tx, r):
                 sl.alive = False
                 if self.kind(tx, r) == "#" and (tx, r) not in self.items:
                     self.rubble.add((tx, r))
@@ -362,7 +410,8 @@ class World:
         self.slabs = [s for s in self.slabs if s.alive]
 
 
-SLAB_TOP = 50
+SLAB_TOP = 37            # y of a ledge's top face inside its tile
+SLAB_H = TH - SLAB_TOP
 
 # ---------------------------------------------------------------------------------------------------------------
 # Actors: the prince, guards, skeleton, shadow. One action-machine drives them all; the bot and the guard AI only
@@ -371,7 +420,7 @@ SLAB_TOP = 50
 GROUND_ST = {"stand", "start", "run", "stop", "turn", "runturn", "step", "pickup", "drink", "draw", "sheathe", "eg", "advance",
              "retreat", "strike", "parry", "hit", "land", "crouch", "sjump", "rjump"}
 LOOP_LEN = {"run": 16, "eg": 14, "fall": 8, "hang": 2}
-REACH = 46.0
+REACH = 38.0
 _width_cache = {}
 
 
@@ -518,7 +567,7 @@ class Actor:
         yl = R * TH + FEET
         if -2 <= gap <= 17 and yl + 44 <= self.y <= yl + 66:
             self.x = e - 7 * self.face
-            self.y = yl + 2 + HANG_H
+            self.y = yl + 3 + HANG_H
             self.row = R
             self.hang_row = R
             self.vy = self.vx = 0.0
@@ -701,7 +750,7 @@ class Actor:
         elif st == "jumpup":
             self.row -= 1
             self.hang_row = self.row
-            self.y = self.row * TH + FEET + 2 + HANG_H
+            self.y = self.row * TH + FEET + 3 + HANG_H
             self.dyoff = 0.0
             self.start("hang", "hang")
         elif st == "pullup":
@@ -710,7 +759,7 @@ class Actor:
             self.start("stand", "stand", -1)
         elif st == "climbdown":
             self.hang_row = self.row
-            self.y = self.ref_y + 2 + HANG_H
+            self.y = self.ref_y + 3 + HANG_H
             self.dyoff = 0.0
             self.start("hang", "hang")
         elif st == "pickup":
@@ -955,6 +1004,10 @@ class Planner:
                 if (not w.has_floor(x + d, y) and w.kind(x + d, y) != "X" and y + 1 < w.h and self.standable(x + d, y + 1, broken)
                         and w.kind(x + d, y + 1) not in "E"):
                     out.append(("climbdown", d, (x + d, y + 1), 95, None))
+                # step off the edge and fall one storey: harmless, and faster than hanging down
+                if (w.kind(x + d, y) == "." and y + 1 < w.h and self.standable(x + d, y + 1, broken)
+                        and w.kind(x + d, y + 1) != "E" and not w.has_floor(x + d, y)):
+                    out.append(("drop", d, (x + d, y + 1), 70, None))
         return out
 
     def search(self, start, goal_fn, rem0, broken0, exo0, budget=None):
@@ -984,7 +1037,7 @@ class Planner:
                 yield (moves, rem, broken, exo)
                 return
             n += 1
-            if n % 400 == 0:
+            if n % 100 == 0:
                 yield None
             for kind, d, dst, c, info in self.moves(node, rem, broken, exo):
                 rem2 = tuple(max(0, r - c) for r in rem)
@@ -1044,6 +1097,7 @@ class Bot:
         self.fight_cool = 0
         self.act_pending = None
         self.holding = False
+        self.hung = False
         self.hold_t = 0
         self.after_fight = False
         self.planning = False
@@ -1089,7 +1143,7 @@ class Bot:
         w = self.g.world
         if not self.planning:
             return False
-        for _ in range(3):
+        for _ in range(1):
             if self.gen is None:
                 if self.chain_i >= len(self.chain):
                     self.planning = False
@@ -1135,6 +1189,8 @@ class Bot:
             return e - 17 * d
         if k == "climbdown":
             return e - 8 * d
+        if k == "drop":
+            return e - 5 * d
         return None
 
     def center(self, tile):
@@ -1187,6 +1243,17 @@ class Bot:
             return
         if p.st == "fall":
             p.kshift = self.grab_flag
+            self.phase = max(self.phase, 3)
+            return
+        if p.st == "hang":
+            cur = self.moves[self.mi][0] if self.mi < len(self.moves) else None
+            if not (cur is not None and cur.kind in ("climbup", "climbdown") and self.phase == 3):
+                p.keys(up=True)
+                self.hung = True
+                return
+        if self.hung and p.st == "stand":
+            self.hung = False
+            self.replan(p)
             return
         if self.holding:
             self.hold_t += 1
@@ -1229,6 +1296,22 @@ class Bot:
             self.exec_climb(p, mv, True)
         elif k == "climbdown":
             self.exec_climb(p, mv, False)
+        elif k == "drop":
+            self.exec_drop(p, mv)
+
+    def exec_drop(self, p, mv):
+        self.grab_flag = False
+        if self.phase == 1:
+            if self.goto(p, self.prep(mv), mv.d):
+                self.phase = 2
+            return
+        if p.st == "stand" and self.phase == 2:
+            p.keys(mv.d, shift=True)
+        elif p.st == "stand" and self.phase >= 2:
+            if (p.tile(), p.row) == mv.dst:
+                self.advance(p)
+            elif self.timeout > 40:
+                self.replan(p)
 
     def advance(self, p):
         goal = self.moves[self.mi][1]
@@ -1428,7 +1511,7 @@ class Bot:
 
     def duel(self, p, f, d):
         skill = 0.9 if not f.invuln else 0.85
-        if f.st == "strike" and f.fi in (1, 2, 3) and d <= 62 and not self.parried:
+        if f.st == "strike" and f.fi in (1, 2, 3) and d <= 54 and not self.parried:
             self.parried = True
             if random.random() < skill:
                 p.keys(up=True)
@@ -1442,12 +1525,12 @@ class Bot:
         if f.st in ("hit", "dying") and d <= REACH - 4:
             p.keys(shift=True)
             return
-        if p.hp <= 1 and f.hp >= 2 and d < 62 and random.random() < 0.25:
+        if p.hp <= 1 and f.hp >= 2 and d < 54 and random.random() < 0.25:
             p.keys(-p.face)
             return
         if d > REACH - 4:
             p.keys(p.face)
-        elif d < 26:
+        elif d < 22:
             p.keys(-p.face)
         elif f.st == "strike":
             return
@@ -1488,7 +1571,7 @@ class Renderer:
                 gx, gy = gx0 + tx, gy0 + ty
                 if 0 <= gx < w.w and 0 <= gy < w.h:
                     name, st = w.cell(gx, gy)
-                    tiles_rows.append(TILES[w.theme][name][st])
+                    tiles_rows.append(w.tile_rows(gx, gy))
                     self.shown[(gx, gy)] = (name, st)
                 else:
                     tiles_rows.append(TILES[w.theme]["empty_0"][0])
@@ -1515,9 +1598,9 @@ class Renderer:
             if self.shown.get((gx, gy)) == (name, st):
                 continue
             self.shown[(gx, gy)] = (name, st)
-            rows = TILES[w.theme][name][st]
+            rows = w.tile_rows(gx, gy)
             tx, ty = gx - gx0, gy - gy0
-            r0, r1 = (4, 40) if name.startswith("torch") else (0, TH)
+            r0, r1 = (4, 40) if name.startswith("torch") and not w.has_under(gx, gy) else (0, TH)
             if name.startswith("potion") or name.startswith("sword"):
                 r0, r1 = 30, TH
             b0 = tx * TW * SC * 2
@@ -1533,7 +1616,7 @@ class Renderer:
         ox0, oy0 = sx * LW, sy * LH
         out = []
         for sl in g.world.slabs:
-            s = MISC["slab_" + g.world.theme]
+            s = MISC["slab_%d" % g.world.theme]
             out.append((("slab", id(sl)), s, int(sl.x) + s[0] - ox0, int(sl.y) - oy0))
         for a in g.guards:
             if not a.hidden and not (a.st == "dead" and a.vanish):
@@ -1541,6 +1624,9 @@ class Renderer:
                 x0 = int(round(a.x)) + s[0] - ox0
                 y0 = int(round(a.y + a.dyoff)) + s[1] - oy0
                 out.append((("a", id(a)), s, x0, y0))
+        for f in g.fx:
+            s = f[0]
+            out.append((("fx", id(f)), s, int(f[1]) + s[0] - ox0, int(f[2]) + s[1] - oy0))
         p = g.prince
         if not p.hidden:
             s = p.spr()
@@ -1638,7 +1724,7 @@ class Renderer:
         p = g.prince
         foe = g.current_foe()
         mins = g.minutes_left()
-        state = (p.hp, p.maxhp, foe.hp if foe else -1, foe.maxhp if foe else -1, g.n, g.score, mins)
+        state = (p.hp, p.maxhp, min(foe.hp, 8) if foe else -1, min(foe.maxhp, 8) if foe else -1, g.n, g.score, mins)
         if not force and state == self.hud_cache:
             return
         old = self.hud_cache
@@ -1648,13 +1734,14 @@ class Renderer:
             fill_rect(0, HUD_Y, W, 4, rgb565(90, 90, 110))
         if force or old is None or old[:2] != state[:2]:
             fill_rect(OX, HUD_Y + 60, 8 * 40, 36, 0)
-            for i in range(p.maxhp):
+            for i in range(min(p.maxhp, 9)):
                 blit(HUD["kid_full" if i < p.hp else "kid_empty"], OX + 10 + i * 40, HUD_Y + 62)
         if force or old is None or old[2:4] != state[2:4]:
             fill_rect(W - OX - 8 * 40 - 10, HUD_Y + 60, 8 * 40 + 10, 36, 0)
             if foe is not None:
-                for i in range(foe.maxhp):
-                    blit(HUD["opp_full" if i < foe.hp else "opp_empty"], W - OX - 10 - (i + 1) * 40, HUD_Y + 62)
+                shown = min(foe.maxhp, 8)
+                for i in range(shown):
+                    blit(HUD["opp_full" if i < min(foe.hp, shown) else "opp_empty"], W - OX - 10 - (i + 1) * 40, HUD_Y + 62)
         if force or old is None or old[4:6] != state[4:6]:
             txt = "LEVEL %d   SCORE %d" % (g.n, g.score)
             fill_rect(OX + 340, HUD_Y + 14, 920, 40, 0)
@@ -1667,25 +1754,25 @@ class Renderer:
 # ---------------------------------------------------------------------------------------------------------------
 # The game: levels, guards, events, scoring, clock
 # ---------------------------------------------------------------------------------------------------------------
-TICKS_PER_GAME_MINUTE = 200
-SCORE_TARGET = 12000
+TICKS_PER_GAME_MINUTE = 190
+SCORE_TARGET = 9000
 GUARD_HP = [3, 3, 4, 3, 4, 4, 5, 4, 5, 5, 5, 4]
 
 
 def guard_params(n, glyph):
     lv = max(1, min(12, n))
     p = dict(hp=GUARD_HP[lv - 1], block=0.08 + 0.04 * lv, strike=0.028 + 0.0042 * lv, adv=0.16 + 0.01 * lv,
-             restrike=0.08 + 0.03 * lv, refract=max(8, 26 - 2 * lv), pal="gblue" if lv % 3 else "gred", invuln=False)
+             restrike=0.08 + 0.03 * lv, refract=max(8, 26 - 2 * lv), pal=GUARD_PAL[lv], invuln=False)
     if glyph == "3":
-        p.update(hp=p["hp"] + 2, pal="gfat", strike=p["strike"] * 0.8, adv=p["adv"] * 0.7, block=p["block"] * 0.8)
+        p.update(hp=p["hp"] + 2, pal="g_fat", strike=p["strike"] * 0.8, adv=p["adv"] * 0.7, block=p["block"] * 0.8)
     elif glyph == "4":
         p.update(hp=99, pal="skel", invuln=True, block=0.0, strike=0.05, adv=0.2)
     elif glyph == "5":
         p.update(hp=1, pal="shadow", block=0.5)
     elif glyph == "6":
-        p.update(hp=7, pal="vizier", block=0.7, strike=0.1, adv=0.25, restrike=0.4, refract=8)
+        p.update(hp=7, pal="g_vizier", block=0.7, strike=0.1, adv=0.25, restrike=0.4, refract=8)
     elif glyph == "7":
-        p.update(hp=3, pal="shadow", block=0.45, strike=0.07)
+        p.update(hp=3, pal="shadow", block=0.28, strike=0.045)
     return p
 
 
@@ -1712,6 +1799,8 @@ class Game:
         self.over = None
         self.level_start_clock = 0
         self.flash = 0
+        self.fx = []
+        self.mercy = 0
         self.prince = None
 
     # ---- time ----
@@ -1740,9 +1829,14 @@ class Game:
         self.rend = Renderer(self)
         self.rend.cur = None
         self.level_start_clock = self.clock
+        self.fx = []
 
     def make_guard(self, x, row, glyph, face=-1):
         pr = guard_params(self.n, glyph)
+        # Every death on a level makes its guards a little less lethal, so the bot cannot loop on one duel for ever.
+        soften = max(0.45, 1.0 - 0.16 * self.mercy)
+        pr["block"] *= soften
+        pr["strike"] *= soften
         a = Actor(self, "merge" if glyph == "5" else "guard", pr["pal"], x, row, face)
         a.hp = a.maxhp = pr["hp"]
         a.p_block, a.p_strike, a.p_adv, a.p_restrike = pr["block"], pr["strike"], pr["adv"], pr["restrike"]
@@ -1769,6 +1863,7 @@ class Game:
     # ---- hooks from actors ----
     def on_death(self, a, how):
         if a is self.prince:
+            self.mercy += 1
             self.phase = "dead"
             self.phase_t = 0
         elif a.kind == "guard" and not getattr(a, "counted", False) and a.glyph != "7":
@@ -1824,7 +1919,7 @@ class Game:
         if g.refract > 0:
             return
         r = random.random
-        if p.st == "strike" and p.fi <= 5 and d <= 62:
+        if p.st == "strike" and p.fi <= 5 and d <= 54:
             if not g.reacted:
                 g.reacted = True
                 if r() < g.p_block:
@@ -1865,10 +1960,12 @@ class Game:
                 continue
             a.struck = True
             if t.st == "parry" and pa[0] <= t.fi <= pa[1] and (a.x - t.x) * t.face > 0:
+                self.fx.append([MISC["spark_blue"], (a.x + t.x) / 2, a.y - 22, 6])
                 a.start("hit", "hit")
                 t.riposte = 20
                 continue
             dmg = 2 if (t.kind == "prince" and not t.out) else 1
+            self.fx.append([MISC["spark_red"], t.x, t.y - 24, 6])
             shove = 6.0 + (5.0 if t.invuln else 0.0)
             nx = t.x + a.face * shove
             t.x = self.world.barrier(t.x, nx, t.row, a.face)
@@ -1899,6 +1996,7 @@ class Game:
     # ---- level end ----
     def finish_level(self):
         bonus = min(500, self.minutes_left() * 8)
+        self.mercy = 0
         self.score += 1000 + bonus
         self.levels_done += 1
 
@@ -1927,6 +2025,9 @@ class Game:
             gd.tick()
         self.resolve_strikes()
         self.events()
+        for f in self.fx:
+            f[3] -= 1
+        self.fx = [f for f in self.fx if f[3] > 0]
 
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -1944,8 +2045,8 @@ def make():
     s = {"mode": "card", "t": 0, "ticks": 0, "tries": 0, "ended": False}
 
     def begin_card(n):
-        g.new_level(n)
-        s.update(mode="card", t=0, tries=0)
+        # Level construction is deferred by one tick so the card draw and the build never share a tick.
+        s.update(mode="pre", t=0, tries=0, next=n)
         card("LEVEL %d" % n, "%d MINUTES LEFT" % g.minutes_left())
 
     begin_card(1)
@@ -1968,6 +2069,10 @@ def make():
         if s["ticks"] >= CAP_TICKS - 120:
             finish("TIME LIMIT")
             return False
+        if m == "pre":
+            g.new_level(s["next"])
+            s["mode"] = "card"
+            return False
         if m == "card":
             s["t"] += 1
             more = g.bot.plan_step(g.prince)
@@ -1976,11 +2081,14 @@ def make():
                 g.new_level(g.n)
                 return False
             if not more and s["t"] >= 60:
-                s["mode"] = "play"
+                s["mode"] = "play0"
                 g.phase = "play"
                 clear()
-                g.rend.enter(*camera())
-                g.rend.hud(True)
+            return False
+        if m == "play0":
+            g.rend.enter(*camera())
+            g.rend.hud(True)
+            s["mode"] = "play"
             return False
         if m == "play" or m == "dead":
             if g.minutes_left() <= 0:

@@ -108,13 +108,13 @@ add("standjump", ps.STAND_JUMP, ps.SJ_DX, ps.SJ_DY, takeoff=ps.SJ_TAKEOFF_AT, la
 add("runjump", ps.RUN_JUMP, ps.RJ_DX, ps.RJ_DY, takeoff=ps.RJ_TAKEOFF_AT, land=ps.RJ_LAND_AT)
 add("runjump_b", [mirror_limbs(p) for p in ps.RUN_JUMP], ps.RJ_DX, ps.RJ_DY, takeoff=ps.RJ_TAKEOFF_AT, land=ps.RJ_LAND_AT)
 nj = len(ps.JUMPUP)
-add("jumpup", ps.JUMPUP, ps.JUMPUP_DX, smooth_ramp(nj, 0, HH - 61, 2, nj - 1))
+add("jumpup", ps.JUMPUP, ps.JUMPUP_DX, smooth_ramp(nj, 0, HH - 60, 2, nj - 1))
 npu = len(ps.PULLUP)
 pu_dx = [0, 0, 0.5, 0.5, 1, 1, 1.5, 2, 2.5, 3, 3, 2, 1, 0.5][:npu]
-add("pullup", ps.PULLUP, pu_dx, smooth_ramp(npu, 2 + HH, 0, 1, npu - 2))
+add("pullup", ps.PULLUP, pu_dx, smooth_ramp(npu, 3 + HH, 0, 1, npu - 2))
 ncd = len(ps.CLIMBDOWN)
 cd_dx = [0, 0, 0, 0.5, 1, 1.5, -1, -2, -2, -3, -2, -2][:ncd]
-add("climbdown", ps.CLIMBDOWN, cd_dx, smooth_ramp(ncd, 0, 2 + HH, 4, ncd - 1), flip=6)
+add("climbdown", ps.CLIMBDOWN, cd_dx, smooth_ramp(ncd, 0, 3 + HH, 4, ncd - 1), flip=6)
 add("hang", [ps.HANG1, ps.HANG2], [0, 0])
 add("fall", ps.FALL, [0] * len(ps.FALL))
 add("landsoft", ps.LAND_SOFT)
@@ -142,10 +142,8 @@ add("dead", [ps.DEAD_BACK])
 PRINCE_ONLY = [k for k in SEQ]
 FIGHT_SET = ["eg", "advance", "retreat", "strike", "parry", "hit", "die", "dead", "stand", "run", "stop", "turn", "step", "start",
              "fall", "landsoft", "dead_fwd", "impaled", "die_fall"]
-VIZIER = rig.Palette(**{**rig.GUARD_RED.__dict__, "shirt": (88, 28, 110), "turban": (214, 176, 60), "vest": (44, 14, 60),
-                        "pants": (50, 40, 60), "scale": 1.08, "girth": 1.4, "outline": (20, 10, 30)})
-PALS = {"prince": rig.PRINCE, "gblue": rig.GUARD_BLUE, "gred": rig.GUARD_RED, "gfat": rig.GUARD_FAT,
-        "skel": rig.SKELETON, "shadow": rig.SHADOW, "vizier": VIZIER}
+PALS = {"prince": rig.PRINCE, "skel": rig.SKELETON, "shadow": rig.SHADOW}
+PALS.update(rig.GUARDS)
 
 
 def build_sprites():
@@ -169,38 +167,52 @@ def cell_rows(img):
 
 def build_tiles():
     out = {}
-    for theme in tiles.THEMES:
+    for level in tiles.THEMES:
         th = {}
-        for name, states in tiles.build_theme(theme).items():
+        for name, states in tiles.build_theme(level).items():
             th[name] = [cell_rows(im) for im in states]
-        out[theme] = th
+        out[level] = th
+        print("tiles level", level, tiles.THEMES[level]["name"])
     return out
 
 
-def runs_from_rgb(img):
-    rgba = img.convert("RGBA")
-    return sprite_from_image(rgba, 0)
+def spark(color, core):
+    # Eight-point star burst shown where blades clash (blue) or steel bites (red).
+    im = Image.new("RGBA", (21, 21), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    import math
+    pts = []
+    for i in range(16):
+        r = 10 if i % 2 == 0 else 4
+        a = math.pi * 2 * i / 16
+        pts.append((10 + r * math.cos(a), 10 + r * math.sin(a)))
+    d.polygon(pts, fill=color + (255,))
+    d.ellipse([6, 6, 14, 14], fill=core + (255,))
+    return sprite_from_image(im, 10)
 
 
 def build_misc():
     misc = {}
-    for theme in tiles.THEMES:
-        p = tiles.Painter(theme, 0)
+    for level in tiles.THEMES:
+        p = tiles.Painter(level, 0)
         im = p.floor_cell().crop((0, tiles.SLAB_TOP, 32, tiles.TH)).convert("RGBA")
-        misc["slab_" + theme] = sprite_from_image(im, 16)
-    # HUD triangles at screen resolution (opaque, black background).
+        sl = sprite_from_image(im, 16)
+        sl[1] = 0     # the slab is anchored at its own top edge, not at a character's ground line
+        misc["slab_%d" % level] = sl
+    misc["spark_blue"] = spark((73, 146, 255), (255, 255, 255))
+    misc["spark_red"] = spark((231, 0, 0), (255, 255, 0))
+
     def tri(color, filled):
         im = Image.new("RGB", (36, 32), (0, 0, 0))
         d = ImageDraw.Draw(im)
         pts = [(18, 2), (34, 29), (2, 29)]
         if filled:
             d.polygon(pts, fill=color)
-            d.line(pts + [pts[0]], fill=tuple(min(255, v + 70) for v in color), width=2)
         else:
             d.line(pts + [pts[0]], fill=tuple(v // 2 for v in color), width=2)
         return pack(im)
-    hud = {"kid_full": tri((220, 40, 40), True), "kid_empty": tri((220, 40, 40), False),
-           "opp_full": tri((70, 110, 240), True), "opp_empty": tri((70, 110, 240), False)}
+    hud = {"kid_full": tri((231, 0, 0), True), "kid_empty": tri((186, 0, 0), False),
+           "opp_full": tri((73, 146, 255), True), "opp_empty": tri((73, 146, 255), False)}
     return misc, hud
 
 

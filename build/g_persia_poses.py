@@ -7,11 +7,16 @@ from g_persia_rig import P, STAND, sequence, mirror_limbs
 stand = P()
 
 # ---- running -------------------------------------------------------------------------------------------------
-RC = P(lean=14, head=-4, ra_s=38, ra_e=75, fa_s=-38, fa_e=45, rl_t=-34, rl_k=-38, fl_t=40, fl_k=-6)
-RP = P(lean=15, head=-4, ra_s=10, ra_e=70, fa_s=-8, fa_e=60, rl_t=12, rl_k=-88, fl_t=4, fl_k=0)
-RC2, RP2 = mirror_limbs(RC), mirror_limbs(RP)
-RUN_CYCLE = sequence([(RC, 4), (RP, 4), (RC2, 4), (RP2, 4)], loop=True)          # 16 frames, contacts at 0 and 8
-RUN_DX = 3.6
+# Eight key poses, each held for two ticks (about 15 poses per second): the choppy cadence of rotoscoped footage.
+_RUN_A = P(lean=20, head=-6, ra_s=-46, ra_e=55, fa_s=52, fa_e=72, rl_t=36, rl_k=-14, fl_t=-34, fl_k=-26)
+_RUN_B = P(lean=22, head=-6, ra_s=-30, ra_e=55, fa_s=34, fa_e=72, rl_t=14, rl_k=-26, fl_t=-34, fl_k=-72)
+_RUN_C = P(lean=21, head=-6, ra_s=-8, ra_e=60, fa_s=8, fa_e=70, rl_t=-8, rl_k=-30, fl_t=24, fl_k=-96)
+_RUN_D = P(lean=20, head=-6, ra_s=20, ra_e=65, fa_s=-24, fa_e=60, rl_t=-26, rl_k=-52, fl_t=40, fl_k=-30)
+RC, RP = _RUN_A, _RUN_C
+RC2, RP2 = mirror_limbs(_RUN_A), mirror_limbs(_RUN_C)
+_RUN_KEYS = [_RUN_A, _RUN_B, _RUN_C, _RUN_D] + [mirror_limbs(q) for q in (_RUN_A, _RUN_B, _RUN_C, _RUN_D)]
+RUN_CYCLE = [q for q in _RUN_KEYS for _ in range(2)]            # 16 ticks, ground contacts at 0 and 8
+RUN_DX = 3.5
 
 S1 = P(lean=8, head=-2, ra_s=-10, ra_e=40, fa_s=14, fa_e=40, rl_t=-14, rl_k=-14, fl_t=18, fl_k=-4)
 START = sequence([(stand, 3), (S1, 3), (RP, 3), (RC2, 0)])[:-1]                      # 9 frames, then cycle at 8

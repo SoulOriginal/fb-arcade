@@ -1,212 +1,293 @@
-# Build-time only: procedural tile art, one 32x63 logical cell per tile state, in two themes
-# (dungeon: blue-grey stone, palace: beige stone with gold trim).
+# Build-time only: procedural tile art. One 32x63 logical cell per tile state; every level gets its own theme
+# (background mode, stone palette, decorations, flame colours) so levels are recognisable by look alone.
+# Layout follows the original screen: a thin lit ledge face at the bottom of each row, dark depth above it.
 import random
 from PIL import Image, ImageDraw
 
 TW, TH = 32, 63
-FEET = 54          # y of the standing line inside a cell: the front edge of the slab top face
-SLAB_TOP = 50      # top face of the slab spans SLAB_TOP..FEET, the front face FEET+1..TH-1
-
-THEMES = {
-    "dungeon": dict(bricks=[(68, 76, 112), (60, 68, 102), (74, 82, 118), (54, 62, 94)], mortar=(26, 30, 48),
-                    hi=(96, 106, 146), top=(166, 168, 196), top2=(142, 146, 176), front=(104, 108, 142),
-                    front2=(84, 88, 120), seam=(40, 44, 68), edge=(204, 206, 226), trim=(150, 150, 190),
-                    deco=(24, 26, 44), deco2=(46, 50, 78), pillar=(150, 154, 186), pillar_d=(96, 100, 134),
-                    pillar_l=(190, 194, 220), block=[(88, 96, 132), (80, 88, 124)], block_m=(30, 34, 54),
-                    glow=(255, 190, 90)),
-    "palace": dict(bricks=[(206, 186, 148), (196, 176, 140), (212, 192, 154), (188, 168, 132)], mortar=(120, 100, 74),
-                   hi=(238, 222, 186), top=(240, 228, 192), top2=(222, 206, 168), front=(176, 154, 114),
-                   front2=(150, 128, 92), seam=(104, 84, 60), edge=(252, 244, 214), trim=(226, 186, 66),
-                   deco=(40, 52, 130), deco2=(180, 40, 44), pillar=(232, 216, 176), pillar_d=(168, 146, 104),
-                   pillar_l=(250, 240, 208), block=[(224, 206, 168), (214, 196, 158)], block_m=(130, 108, 80),
-                   glow=(255, 214, 120)),
-}
+SLAB_TOP, FEET = 37, 44      # ledge top face spans y 37..47 (the prince stands at y 44); a 15 px brick course is its front face
 
 
 def mul(c, f):
     return tuple(max(0, min(255, int(v * f))) for v in c)
 
 
+def theme(name, bg, face, top, flame, decor, gold=(186, 146, 0), rug=None, column="plain", bgcols=None, marks=(28, 48, 77),
+          sconce=(170, 170, 170), door=(121, 134, 150), density=0.18):
+    return dict(name=name, bg=bg, face=face, top=top, flame=flame, decor=decor, gold=gold, rug=rug, column=column,
+                bgcols=bgcols or (mul(face, 0.45), mul(face, 0.38)), marks=marks, sconce=sconce, door=door, density=density)
+
+
+ORANGE = ((255, 134, 0), (255, 200, 0), (255, 255, 180))
+THEMES = {
+    1: theme("dungeon", "void", (121, 134, 150), (69, 93, 113), ORANGE, "grille"),
+    2: theme("dungeon_moss", "void", (112, 146, 132), (58, 100, 92), ORANGE, "chain", marks=(20, 60, 50), density=0.22),
+    3: theme("crypt", "void", (128, 118, 150), (74, 64, 100), ((120, 255, 100), (200, 255, 120), (240, 255, 220)), "skull",
+             marks=(50, 40, 76), density=0.24),
+    4: theme("sandstone", "brick", (232, 196, 140), (168, 128, 80), ORANGE, "banner", rug=(186, 0, 0), column="deco",
+             bgcols=((150, 110, 70), (132, 96, 60)), density=0.2),
+    5: theme("rose_hall", "arch", (236, 170, 140), (176, 100, 90), ORANGE, "window", rug=(186, 0, 0), column="deco",
+             bgcols=((140, 78, 70), (122, 66, 62)), gold=(255, 219, 0), density=0.26),
+    6: theme("potion_cellar", "void", (96, 150, 170), (52, 100, 120), ((80, 220, 255), (170, 255, 255), (255, 255, 255)), "shelf",
+             marks=(20, 60, 80), density=0.26),
+    7: theme("marble", "panel", (214, 222, 238), (140, 156, 190), ORANGE, "window", rug=(73, 100, 220), column="deco",
+             bgcols=((96, 110, 150), (84, 96, 136)), gold=(255, 219, 80), density=0.22),
+    8: theme("gold_hall", "brick", (255, 214, 110), (190, 140, 50), ((255, 255, 200), (255, 255, 120), (255, 255, 255)), "banner",
+             rug=(130, 20, 100), column="deco", bgcols=((160, 110, 30), (140, 96, 24)), gold=(255, 255, 120), density=0.24),
+    9: theme("garden_cistern", "arch", (150, 184, 140), (84, 124, 84), ORANGE, "window", column="plain",
+             bgcols=((60, 90, 64), (50, 78, 56)), marks=(30, 70, 40), density=0.26),
+    10: theme("royal_blue", "panel", (160, 170, 232), (88, 100, 170), ((150, 170, 255), (210, 220, 255), (255, 255, 255)), "banner",
+              rug=(231, 0, 0), column="deco", bgcols=((40, 56, 120), (32, 46, 104)), gold=(255, 219, 0), density=0.28),
+    11: theme("tower", "void", (150, 110, 180), (96, 64, 130), ((255, 100, 255), (255, 170, 255), (255, 240, 255)), "window",
+              marks=(60, 30, 90), column="deco", gold=(255, 170, 255), density=0.24),
+    12: theme("vizier", "void", (100, 100, 124), (56, 56, 80), ((150, 200, 255), (210, 240, 255), (255, 255, 255)), "banner",
+              rug=(186, 0, 0), column="deco", gold=(255, 219, 0), marks=(40, 40, 64), density=0.28),
+}
+
+
 class Painter:
-    def __init__(self, theme, variant):
-        self.t = THEMES[theme]
-        self.theme = theme
+    def __init__(self, level, variant):
+        self.t = THEMES[level]
         self.v = variant
-        self.rng = random.Random(variant * 977 + (1 if theme == "palace" else 0))
+        self.rng = random.Random(level * 7919 + variant * 131)
 
-    def wall(self):
-        t, v = self.t, self.v
-        im = Image.new("RGB", (TW, TH), t["mortar"])
+    # ---- backgrounds ----
+    def bg(self):
+        t, v, rng = self.t, self.v, self.rng
+        im = Image.new("RGB", (TW, TH), (0, 0, 0))
         d = ImageDraw.Draw(im)
-        for r in range(9):
-            y0 = r * 7
-            off = 8 if (r + v) % 2 else 0
-            for k in range(-1, 3):
-                x0 = k * 16 + off
-                col = t["bricks"][self.rng.randrange(4)]
-                shade = 0.94 + 0.012 * ((r * 3 + k * 5 + v) % 7)
-                col = mul(col, shade)
-                d.rectangle([x0, y0, x0 + 14, y0 + 5], fill=col)
-                d.line([x0, y0, x0 + 14, y0], fill=t["hi"])
-                for _ in range(2):
-                    px, py = x0 + self.rng.randrange(1, 14), y0 + self.rng.randrange(1, 6)
-                    d.point((px, py), fill=mul(col, 0.86))
-        if v == 3:
-            self.decor(d)
+        mode = t["bg"]
+        if mode == "void":
+            # Dark back wall: courses of deep-toned bricks, so a room reads as masonry rather than empty space.
+            face = t["face"]
+            base, mort = mul(t["top"], 0.52), mul(t["top"], 0.3)
+            d.rectangle([0, 0, TW, TH], fill=mort)
+            for r in range(7):
+                y0 = r * 10
+                off = 10 if (r + v) % 2 else 0
+                for k in range(-1, 3):
+                    x0 = k * 21 + off
+                    col = mul(base, 1.0 if rng.random() > 0.35 else 1.18)
+                    d.rectangle([x0, y0, x0 + 19, y0 + 8], fill=col)
+            for _ in range(2):
+                x, y = rng.randrange(2, 22), rng.randrange(6, 44)
+                d.line([x, y, x + 6, y], fill=mul(t["top"], 0.8))
+                d.line([x + 3, y, x + 3, y + 2], fill=mul(t["top"], 0.8))
+                d.point((x - 2, y + 6), fill=mul(t["top"], 0.8))
+        elif mode in ("brick", "arch"):
+            b1, b2 = t["bgcols"]
+            mort = mul(b2, 0.7)
+            for r in range(9):
+                y0 = r * 7
+                off = 8 if (r + v) % 2 else 0
+                d.rectangle([0, y0, TW, y0 + 6], fill=mort)
+                for k in range(-1, 3):
+                    x0 = k * 16 + off
+                    col = b1 if (r + k + v) % 3 else b2
+                    d.rectangle([x0, y0, x0 + 14, y0 + 5], fill=col)
+        else:  # panel: vertical marble panels with a gilt moulding
+            b1, b2 = t["bgcols"]
+            d.rectangle([0, 0, TW, TH], fill=b1)
+            for x in (0, 15, 31):
+                d.line([x, 0, x, TH], fill=b2)
+            d.rectangle([3, 8, 12, 46], outline=b2)
+            d.rectangle([18, 8, 28, 46], outline=b2)
+            d.line([0, 4, TW, 4], fill=t["gold"])
         px = im.load()
-        for y, f in enumerate((0.5, 0.66, 0.8, 0.92)):
-            for x in range(TW):
-                px[x, y] = mul(px[x, y], f)
-        return im
-
-    def pit_cell(self):
-        # Bottomless drop below the lowest row: the wall fades to black so the gap reads as deadly.
-        im = self.wall()
-        px = im.load()
-        for y in range(TH):
-            f = max(0.0, 0.75 - y * 0.0125)
-            for x in range(TW):
-                px[x, y] = mul(px[x, y], f)
+        if True:
+            for y, f in enumerate((0.45, 0.6, 0.78, 0.9)):
+                for x in range(TW):
+                    px[x, y] = mul(px[x, y], f)
+        if v >= 1:
+            layer = Image.new("RGBA", (TW, TH), (0, 0, 0, 0))
+            self.decor(ImageDraw.Draw(layer))
+            if v == 2:
+                layer = layer.transpose(Image.FLIP_LEFT_RIGHT)
+            im.paste(layer, (0 if v == 1 else 5, 0), layer)
         return im
 
     def decor(self, d):
         t = self.t
-        if self.theme == "dungeon":
-            d.rectangle([8, 12, 23, 49], fill=t["deco"])
-            d.rectangle([10, 10, 21, 12], fill=t["deco2"])
-            d.rectangle([8, 14, 8, 49], fill=t["deco2"])
-            d.rectangle([23, 14, 23, 49], fill=t["deco2"])
-            d.ellipse([8, 8, 23, 22], fill=t["deco"])
-            d.arc([8, 8, 23, 22], 180, 360, fill=t["deco2"])
-        else:
-            d.rectangle([9, 5, 22, 40], fill=t["deco"])
-            d.rectangle([9, 5, 22, 7], fill=t["trim"])
-            d.polygon([(9, 40), (22, 40), (16, 47)], fill=t["deco"])
-            d.rectangle([13, 12, 18, 30], fill=t["trim"])
-            d.rectangle([14, 14, 17, 28], fill=t["deco2"])
-            d.line([9, 5, 9, 40], fill=t["trim"])
-            d.line([22, 5, 22, 40], fill=t["trim"])
+        k = t["decor"]
+        gold = t["gold"]
+        if k == "grille":
+            d.rectangle([9, 6, 22, 26], fill=(12, 20, 40))
+            for x in range(10, 22, 3):
+                d.line([x, 6, x, 26], fill=(170, 170, 170))
+            d.line([9, 15, 22, 15], fill=(85, 85, 85))
+            d.rectangle([8, 5, 23, 6], fill=(85, 85, 85))
+        elif k == "chain":
+            for y in range(0, 28, 4):
+                d.rectangle([14, y, 16, y + 2], outline=(150, 150, 150))
+            d.rectangle([12, 28, 18, 33], fill=(85, 85, 85))
+        elif k == "skull":
+            d.ellipse([11, 14, 20, 22], fill=(240, 236, 214))
+            d.rectangle([13, 21, 18, 25], fill=(240, 236, 214))
+            d.rectangle([13, 17, 14, 18], fill=(0, 0, 0))
+            d.rectangle([17, 17, 18, 18], fill=(0, 0, 0))
+            d.line([8, 30, 24, 32], fill=(200, 196, 170))
+            d.line([10, 32, 22, 29], fill=(200, 196, 170))
+        elif k == "shelf":
+            d.rectangle([5, 24, 27, 26], fill=(121, 93, 56))
+            for i, col in enumerate(((231, 0, 0), (73, 146, 255), (60, 200, 90), (231, 0, 0))):
+                x = 7 + i * 5
+                d.rectangle([x, 18, x + 3, 23], fill=col)
+                d.rectangle([x + 1, 16, x + 2, 18], fill=(230, 230, 230))
+        elif k == "banner":
+            col = t["rug"] or (186, 0, 0)
+            d.rectangle([9, 0, 22, 26], fill=col)
+            d.rectangle([9, 0, 22, 2], fill=gold)
+            d.polygon([(9, 26), (22, 26), (16, 33)], fill=col)
+            d.rectangle([14, 6, 17, 18], fill=gold)
+            d.line([9, 3, 9, 25], fill=mul(col, 0.7))
+        else:  # window: an arch of sky behind a gilt frame
+            sky = (73, 146, 255) if t["bg"] != "void" else (60, 30, 90)
+            d.rectangle([8, 4, 23, 34], fill=gold)
+            d.rectangle([10, 8, 21, 34], fill=sky)
+            d.pieslice([10, 3, 21, 15], 180, 360, fill=sky)
+            d.line([16, 4, 16, 34], fill=gold)
+            d.line([10, 21, 21, 21], fill=gold)
 
-    def slab(self, im, dy=0, cracks=False, rubble=False):
+    # ---- structures ----
+    def brick_course(self, d, y0, h, odd, shade=1.0):
+        """One course of big stones (about one tile wide each), staggered on odd courses."""
+        face = self.t["face"]
+        base = mul(face, shade)
+        d.rectangle([0, y0, TW - 1, y0 + h - 1], fill=mul(self.t["top"], 0.62 * shade))
+        xs = [(-14, 29), (17, 29)] if odd else [(1, 29)]
+        for x0, w in xs:
+            d.rectangle([x0, y0, x0 + w - 1, y0 + h - 2], fill=base)
+            d.line([x0, y0, x0 + w - 1, y0], fill=mul(base, 1.1))
+            d.line([x0, y0 + h - 2, x0 + w - 1, y0 + h - 2], fill=mul(base, 0.76))
+            rng = self.rng
+            if rng.random() < 0.5:
+                d.point((x0 + rng.randrange(2, max(3, w - 2)), y0 + rng.randrange(2, max(3, h - 3))), fill=mul(base, 0.7))
+
+    def top_face(self, im, dy=0, cracks=False, rubble=False):
         t = self.t
         d = ImageDraw.Draw(im)
-        top0, feet = SLAB_TOP + dy, FEET + dy
-        d.rectangle([0, top0, TW - 1, feet], fill=t["top"])
-        d.line([0, top0, TW - 1, top0], fill=t["edge"])
-        for x in range(0, TW, 8):
-            d.point((x + (self.v * 3) % 5, top0 + 2), fill=t["top2"])
-        d.line([0, feet, TW - 1, feet], fill=t["top2"])
-        d.rectangle([0, feet + 1, TW - 1, TH - 1], fill=t["front"])
-        d.line([0, feet + 1, TW - 1, feet + 1], fill=t["trim"] if self.theme == "palace" else t["top2"])
-        d.line([0, TH - 1, TW - 1, TH - 1], fill=t["seam"])
-        mid = feet + 5
-        d.line([0, mid, TW - 1, mid], fill=t["front2"])
-        d.line([0, feet + 1, 0, TH - 1], fill=t["seam"])
-        d.line([16 + (self.v % 2) * 4, feet + 1, 16 + (self.v % 2) * 4, mid], fill=t["seam"])
-        d.line([5, mid, 5, TH - 1], fill=t["seam"])
-        if self.theme == "palace":
-            d.line([0, feet + 3, TW - 1, feet + 3], fill=mul(t["trim"], 0.8))
+        y0, y1 = SLAB_TOP + dy, 47 + dy
+        face = t["face"]
+        top = tuple(int(a + (b - a) * 0.5) for a, b in zip(t["top"], face))
+        top_lo, hi = mul(top, 0.8), mul(top, 1.18)
+        self.brick_course(d, y1 + 1, TH - (y1 + 1), True)
+        d.rectangle([TW - 3, y1 + 1, TW - 1, TH - 1], fill=mul(face, 0.55))
+        d.rectangle([0, y0, TW - 1, y1], fill=top)
+        d.line([0, y0, TW - 1, y0], fill=hi)
+        d.line([0, y1, TW - 1, y1], fill=top_lo)
+        rng = random.Random(self.v * 17 + 3)
+        for _ in range(7):
+            d.point((rng.randrange(1, 31), rng.randrange(y0 + 2, y1)), fill=top_lo)
+        if t["rug"] and self.v >= 1:
+            d.rectangle([0, y0 + 3, TW - 1, y0 + 6], fill=t["rug"])
+            d.line([0, y0 + 3, TW - 1, y0 + 3], fill=t["gold"])
+            d.line([0, y0 + 6, TW - 1, y0 + 6], fill=t["gold"])
         if cracks:
-            d.line([9, top0, 12, top0 + 2, 10, feet, 14, feet + 4], fill=t["seam"])
-            d.line([22, top0 + 1, 20, feet, 23, feet + 3], fill=t["seam"])
+            d.line([9, y0, 12, y0 + 3, 10, y1], fill=top_lo)
+            d.line([22, y0 + 1, 20, y1], fill=top_lo)
         if rubble:
-            rng = random.Random(5 + self.v)
-            for _ in range(14):
-                x, y = rng.randrange(2, 30), rng.randrange(top0 + 1, feet)
-                d.rectangle([x, y, x + rng.randrange(1, 4), y + rng.randrange(1, 3)], fill=rng.choice([t["front"], t["top2"], t["seam"], t["edge"]]))
+            for _ in range(12):
+                x, y = rng.randrange(2, 30), rng.randrange(y0 + 1, y1)
+                d.rectangle([x, y, x + rng.randrange(1, 4), y + rng.randrange(1, 3)], fill=rng.choice([top_lo, hi, mul(top, 0.55)]))
 
     def floor_cell(self, dy=0, cracks=False, rubble=False):
-        im = self.wall()
-        self.slab(im, dy, cracks, rubble)
+        im = self.bg()
+        self.top_face(im, dy, cracks, rubble)
+        return im
+
+    def wall_cell(self):
+        face = self.t["face"]
+        im = Image.new("RGB", (TW, TH), mul(self.t["top"], 0.62))
+        d = ImageDraw.Draw(im)
+        for r in range(4):
+            self.brick_course(d, r * 16, 15, r % 2 == 1)
+        d.rectangle([0, 60, TW, TH], fill=mul(self.t["top"], 0.62))
+        return im
+
+    def wall_side_cell(self):
+        im = self.wall_cell()
+        d = ImageDraw.Draw(im)
+        face = self.t["face"]
+        d.rectangle([TW - 9, 0, TW - 1, TH], fill=mul(face, 0.55))
+        for y in range(15, TH, 16):
+            d.line([TW - 9, y, TW - 1, y], fill=mul(self.t["top"], 0.5))
+        d.line([TW - 9, 0, TW - 9, TH], fill=mul(self.t["top"], 0.45))
+        return im
+
+    def under_band(self):
+        """Ceiling edge on the top row of a screen: one shallow course of stones."""
+        im = Image.new("RGB", (TW, 5), mul(self.t["face"], 0.4))
+        d = ImageDraw.Draw(im)
+        self.brick_course(d, 0, 4, False, 0.9)
+        d.line([0, 4, TW, 4], fill=mul(self.t["face"], 0.25))
         return im
 
     def pillar_cell(self):
+        t = self.t
         im = self.floor_cell()
-        t = self.t
         d = ImageDraw.Draw(im)
-        d.rectangle([8, 0, 23, 5], fill=t["pillar"])
-        d.line([8, 5, 23, 5], fill=t["pillar_d"])
-        d.rectangle([8, 0, 23, 0], fill=t["pillar_l"])
-        d.rectangle([11, 6, 20, 45], fill=t["pillar"])
-        d.rectangle([11, 6, 13, 45], fill=t["pillar_l"])
-        d.rectangle([18, 6, 20, 45], fill=t["pillar_d"])
-        for y in (14, 24, 34):
-            d.line([11, y, 20, y], fill=t["pillar_d"])
-        d.rectangle([8, 45, 23, SLAB_TOP + 1], fill=t["pillar"])
-        d.line([8, 45, 23, 45], fill=t["pillar_l"])
-        d.line([8, SLAB_TOP + 1, 23, SLAB_TOP + 1], fill=t["pillar_d"])
-        if self.theme == "palace":
-            d.rectangle([8, 3, 23, 3], fill=t["trim"])
-        return im
-
-    def block_cell(self):
-        t = self.t
-        im = Image.new("RGB", (TW, TH), t["block_m"])
-        d = ImageDraw.Draw(im)
-        rng = random.Random(self.v * 31 + 7)
-        for r in range(5):
-            y0 = r * 13
-            off = 10 if (r + self.v) % 2 else 0
-            for k in range(-1, 3):
-                x0 = k * 20 + off
-                col = mul(t["block"][rng.randrange(2)], 0.9 + 0.04 * rng.randrange(4))
-                d.rectangle([x0, y0, x0 + 18, y0 + 11], fill=col)
-                d.line([x0, y0, x0 + 18, y0], fill=mul(col, 1.2))
-                d.line([x0, y0 + 11, x0 + 18, y0 + 11], fill=mul(col, 0.7))
-        d.line([0, 0, 0, TH], fill=t["block_m"])
-        d.line([TW - 1, 0, TW - 1, TH], fill=t["block_m"])
+        base = t["face"]
+        gold = t["gold"] if t["column"] == "deco" else mul(base, 0.8)
+        # Heavy square pier: lit front, shaded right side, capital and plinth.
+        d.rectangle([7, 4, 24, 10], fill=gold)
+        d.rectangle([7, 4, 24, 5], fill=mul(gold, 1.25))
+        d.rectangle([9, 11, 22, SLAB_TOP - 5], fill=base)
+        d.rectangle([9, 11, 11, SLAB_TOP - 5], fill=mul(base, 1.15))
+        d.rectangle([18, 11, 22, SLAB_TOP - 5], fill=mul(base, 0.55))
+        for y in range(19, SLAB_TOP - 5, 9):
+            d.line([9, y, 22, y], fill=mul(base, 0.6))
+        d.rectangle([7, SLAB_TOP - 6, 24, SLAB_TOP], fill=gold)
+        d.line([7, SLAB_TOP - 6, 24, SLAB_TOP - 6], fill=mul(gold, 1.25))
         return im
 
     def torch_cell(self, frame):
-        im = self.floor_cell()
         t = self.t
+        im = self.floor_cell()
         d = ImageDraw.Draw(im)
-        rng = random.Random(frame * 13 + self.v)
-        # glow on the bricks around the flame
+        cx, fy = 16, 17
+        o, m, c = t["flame"]
         px = im.load()
-        for y in range(6, 34):
-            for x in range(4, 28):
-                dist = ((x - 16) ** 2 + ((y - 20) * 1.1) ** 2) ** 0.5
-                if dist < 13:
-                    f = (1 - dist / 13) * (0.34 + 0.05 * (frame % 3))
+        for y in range(0, 30):
+            for x in range(6, 26):
+                dist = ((x - cx) ** 2 + ((y - 10) * 1.2) ** 2) ** 0.5
+                if dist < 11:
+                    f = (1 - dist / 11.0) * 0.3
                     r, g, b = px[x, y]
-                    gr, gg, gb = t["glow"]
-                    px[x, y] = (min(255, int(r + (gr - r) * f)), min(255, int(g + (gg - g) * f)), min(255, int(b + (gb - b) * f)))
-        d.rectangle([14, 27, 18, 36], fill=(54, 40, 30))          # sconce
-        d.rectangle([12, 25, 20, 27], fill=(86, 64, 40))
-        d.line([13, 25, 13, 27], fill=(130, 100, 60))
-        sway = [0, 1, 0, -1, 0, 1][frame % 6]
-        h = [9, 11, 10, 12, 10, 11][frame % 6]
-        pts = [(16 - 4, 25), (16 - 3 + sway, 25 - h // 2), (16 + sway * 2, 25 - h), (16 + 3 + sway, 25 - h // 2), (16 + 4, 25)]
-        d.polygon(pts, fill=(224, 80, 20))
-        pts2 = [(16 - 3, 25), (16 - 2 + sway, 25 - h // 2 + 1), (16 + sway * 2, 25 - h + 3), (16 + 2 + sway, 25 - h // 2 + 1), (16 + 3, 25)]
-        d.polygon(pts2, fill=(255, 168, 30))
-        d.polygon([(16 - 1, 25), (16 + sway, 25 - h // 2 - 1), (16 + 1, 25)], fill=(255, 240, 150))
-        if frame % 2 == 0:
-            d.point((16 + sway * 3, 25 - h - 1), fill=(255, 200, 60))
+                    px[x, y] = (min(255, int(r + (o[0] - r) * f)), min(255, int(g + (o[1] - g) * f)), min(255, int(b + (o[2] - b) * f)))
+        d.rectangle([cx - 1, fy + 4, cx + 1, fy + 14], fill=(85, 85, 85))
+        d.rectangle([cx - 3, fy, cx + 3, fy + 4], fill=t["sconce"])
+        d.line([cx - 3, fy, cx + 3, fy], fill=(255, 255, 255))
+        rng = random.Random(frame * 5 + 1)
+        h = [11, 13, 12, 14, 12, 13][frame % 6]
+        sw = [0, 1, 0, -1, 0, 1][frame % 6]
+        d.polygon([(cx - 3, fy), (cx - 2 + sw, fy - h // 2), (cx + sw * 2, fy - h), (cx + 2 + sw, fy - h // 2), (cx + 3, fy)], fill=o)
+        d.polygon([(cx - 2, fy), (cx + sw, fy - h // 2 - 1), (cx + sw, fy - h + 3), (cx + 2, fy)], fill=m)
+        d.polygon([(cx - 1, fy), (cx + sw, fy - h // 2 - 2), (cx + 1, fy)], fill=c)
+        d.point((cx + sw * 3 + rng.randrange(-1, 2), fy - h - 1), fill=o)
         return im
 
     def spikes_cell(self, level):
         im = self.floor_cell()
         d = ImageDraw.Draw(im)
         hs = [0, 5, 11, 17][level]
-        for x in (5, 11, 17, 23):
+        base = FEET + 1
+        for x in (6, 12, 18, 24):
             if hs == 0:
-                d.rectangle([x, FEET - 1, x + 2, FEET - 1], fill=(30, 30, 40))
+                d.point((x, base), fill=(85, 85, 85))
+                d.point((x + 1, base), fill=(85, 85, 85))
             else:
-                d.polygon([(x, FEET - 1), (x + 3, FEET - 1), (x + 1, FEET - 1 - hs)], fill=(206, 212, 226))
-                d.line([(x + 1, FEET - 1), (x + 1, FEET - 1 - hs)], fill=(246, 248, 255))
-                d.line([(x + 3, FEET - 1), (x + 1, FEET - 1 - hs)], fill=(110, 116, 136))
+                d.polygon([(x - 1, base), (x + 2, base), (x, base - hs)], fill=(190, 199, 207))
+                d.line([(x, base), (x, base - hs)], fill=(255, 255, 255))
         return im
 
     def plate_cell(self, down):
         im = self.floor_cell()
         t = self.t
         d = ImageDraw.Draw(im)
-        y = FEET - (0 if down else 3)
-        d.rectangle([8, y - 1, 24, FEET], fill=mul(t["edge"], 0.85 if not down else 0.7))
-        d.line([8, y - 1, 24, y - 1], fill=(255, 255, 255) if not down else t["top2"])
-        d.line([8, FEET, 24, FEET], fill=t["seam"])
+        y = 44 if down else 42
+        d.rectangle([8, y, 24, 46], fill=mul(t["top"], 1.3))
+        d.line([8, y, 24, y], fill=(255, 255, 255) if not down else mul(t["top"], 0.6))
+        d.line([8, 47, 24, 47], fill=mul(t["top"], 0.4))
         return im
 
     def gate_cell(self, k):
@@ -214,132 +295,137 @@ class Painter:
         im = self.floor_cell()
         d = ImageDraw.Draw(im)
         bottom = int(7 + (SLAB_TOP - 7) * (1 - k / 8.0))
-        d.rectangle([9, 0, 10, SLAB_TOP], fill=mul(t["pillar_d"], 0.85))
-        d.rectangle([21, 0, 22, SLAB_TOP], fill=mul(t["pillar_d"], 0.85))
-        for x in (12, 15, 18):
-            d.rectangle([x, 7, x + 1, bottom], fill=(150, 156, 172))
-            d.line([x, 7, x, bottom], fill=(212, 218, 232))
-            d.polygon([(x, bottom), (x + 1, bottom), (x, bottom + 3), (x + 1, bottom + 3)], fill=(110, 114, 130))
-        for y in range(bottom - 3, 8, -9):
-            d.rectangle([11, y, 20, y + 1], fill=(120, 126, 142))
-        d.rectangle([7, 0, 24, 6], fill=t["pillar"])
-        d.line([7, 6, 24, 6], fill=t["pillar_d"])
-        d.line([7, 0, 24, 0], fill=t["pillar_l"])
+        d.rectangle([7, 0, 9, SLAB_TOP + 1], fill=(85, 85, 85))
+        d.rectangle([22, 0, 24, SLAB_TOP + 1], fill=(85, 85, 85))
+        for x in (11, 14, 17, 20):
+            d.line([x, 7, x, bottom], fill=(170, 170, 170))
+            d.line([x + 1, 7, x + 1, bottom], fill=(85, 85, 85))
+            d.polygon([(x, bottom), (x + 1, bottom), (x, bottom + 3)], fill=(255, 255, 255))
+        for y in range(bottom - 4, 8, -10):
+            d.line([10, y, 21, y], fill=(121, 134, 150))
+        d.rectangle([6, 0, 25, 6], fill=(121, 134, 150) if t["bg"] == "void" else t["face"])
+        d.line([6, 6, 25, 6], fill=(48, 69, 89))
+        d.line([6, 0, 25, 0], fill=(255, 255, 255))
         return im
 
     def chomper_cell(self, st):
         im = self.floor_cell()
         d = ImageDraw.Draw(im)
-        jt = [6, 14, 27, 40, 40, 40][st]
-        steel, dark = (176, 182, 198), (92, 98, 116)
-        blood = st == 5
-        d.rectangle([4, 0, 27, 4], fill=self.t["pillar"])
-        d.line([4, 4, 27, 4], fill=self.t["pillar_d"])
-        d.rectangle([6, 5, 25, jt], fill=steel)
+        jt = [3, 8, 17, 28, 28, 28][st]
+        steel, dark = (170, 170, 170), (85, 85, 85)
+        d.rectangle([4, 0, 27, 1], fill=self.t["face"])
+        d.line([4, 1, 27, 1], fill=dark)
+        d.rectangle([6, 2, 25, jt], fill=steel)
         d.line([6, jt, 25, jt], fill=dark)
         for x in (7, 11, 15, 19, 23):
-            d.polygon([(x, jt + 1), (x + 3, jt + 1), (x + 1, jt + 9)], fill=(236, 240, 250) if not blood else (210, 220, 230))
-            d.line([(x + 3, jt + 1), (x + 1, jt + 9)], fill=dark)
-        d.rectangle([6, FEET - 5, 25, FEET - 1], fill=dark)
+            d.polygon([(x, jt + 1), (x + 3, jt + 1), (x + 1, jt + 9)], fill=(255, 255, 255))
+        d.rectangle([6, FEET - 4, 25, FEET], fill=dark)
         for x in (9, 13, 17, 21):
-            d.polygon([(x, FEET - 5), (x + 3, FEET - 5), (x + 1, FEET - 14)], fill=(226, 230, 242))
-            d.line([(x + 3, FEET - 5), (x + 1, FEET - 14)], fill=dark)
-        if blood:
-            for x, y in ((9, 42), (14, 46), (19, 44), (22, 47), (12, 50)):
-                d.rectangle([x, y, x + 2, y + 2], fill=(170, 20, 24))
-            d.rectangle([8, FEET - 2, 24, FEET - 1], fill=(130, 16, 20))
+            d.polygon([(x, FEET - 4), (x + 3, FEET - 4), (x + 1, FEET - 13)], fill=(255, 255, 255))
+        if st == 5:
+            for x, y in ((9, 30), (14, 34), (19, 32), (22, 35), (12, 38)):
+                d.rectangle([x, y, x + 2, y + 2], fill=(186, 0, 0))
+            d.rectangle([8, FEET - 2, 24, FEET], fill=(231, 0, 0))
         return im
 
     def exit_cell(self, k):
         t = self.t
         im = self.floor_cell()
         d = ImageDraw.Draw(im)
-        d.rectangle([2, 4, 29, SLAB_TOP + 1], fill=t["pillar"])
-        d.rectangle([2, 4, 29, 6], fill=t["pillar_l"])
-        d.rectangle([5, 9, 26, SLAB_TOP + 1], fill=(20, 18, 26))
-        d.pieslice([5, 3, 26, 22], 180, 360, fill=(20, 18, 26))
-        # warm stairs behind the door, visible once it is open
-        for i in range(7):
-            y = SLAB_TOP - i * 5
-            col = mul((255, 214, 120), 0.62 + 0.06 * i)
-            d.rectangle([6 + i * 2, y - 3, 26, y], fill=col)
-            d.line([6 + i * 2, y - 3, 26, y - 3], fill=(255, 244, 190))
-        bottom = int(9 + (SLAB_TOP - 9) * (1 - k / 6.0))
-        if bottom > 10:
-            d.rectangle([6, 9, 25, bottom], fill=(86, 88, 104))
-            for y in range(10, bottom, 4):
-                d.line([6, y, 25, y], fill=(52, 54, 68))
-            d.line([6, bottom, 25, bottom], fill=(150, 154, 170))
+        frame = t["door"] if t["bg"] == "void" else t["gold"]
+        d.rectangle([2, 0, 29, SLAB_TOP + 1], fill=frame)
+        d.rectangle([5, 4, 26, SLAB_TOP + 1], fill=(0, 0, 0))
+        d.pieslice([5, 0, 26, 14], 180, 360, fill=(0, 0, 0))
+        for i in range(5):
+            y = SLAB_TOP - i * 6
+            d.rectangle([6 + i * 3, y - 4, 26, y], fill=mul((255, 219, 120), 0.6 + 0.08 * i))
+            d.line([6 + i * 3, y - 4, 26, y - 4], fill=(255, 255, 219))
+        bottom = int(5 + (SLAB_TOP - 5) * (1 - k / 6.0))
+        if bottom > 6:
+            d.rectangle([6, 4, 25, bottom], fill=(85, 85, 85))
+            for y in range(6, bottom, 4):
+                d.line([6, y, 25, y], fill=(48, 69, 89))
+            d.line([6, bottom, 25, bottom], fill=(190, 199, 207))
             for x in range(8, 25, 6):
-                d.line([x, 9, x, bottom], fill=(116, 120, 136))
-        d.rectangle([2, 4, 4, SLAB_TOP + 1], fill=t["pillar_d"])
-        d.rectangle([27, 4, 29, SLAB_TOP + 1], fill=t["pillar_d"])
-        if self.theme == "palace":
-            d.line([2, 4, 29, 4], fill=t["trim"])
+                d.line([x, 4, x, bottom], fill=(121, 134, 150))
         return im
 
     def potion_cell(self, kind, frame):
         im = self.floor_cell()
         d = ImageDraw.Draw(im)
-        col = {"h": (214, 40, 52), "H": (222, 36, 60), "z": (64, 92, 232), "f": (64, 204, 96)}[kind]
+        col = {"h": (231, 0, 0), "H": (231, 0, 0), "z": (73, 146, 255), "f": (60, 200, 90)}[kind]
         big = kind == "H"
-        w, h = (12, 14) if big else (9, 10)
-        cx = 16
-        y1 = FEET - 1
+        w, h = (12, 14) if big else (8, 9)
+        cx, y1 = 16, FEET + 1
         y0 = y1 - h
         d.ellipse([cx - w // 2, y0, cx + w // 2, y1], fill=col)
-        d.ellipse([cx - w // 2 + 2, y0 + 2, cx - w // 2 + 4, y0 + 4], fill=mul(col, 1.5))
-        d.rectangle([cx - 2, y0 - 4, cx + 1, y0 + 1], fill=(220, 224, 236))
-        d.rectangle([cx - 3, y0 - 5, cx + 2, y0 - 4], fill=(120, 80, 50))
-        d.line([cx - w // 2, y1, cx + w // 2, y1], fill=mul(col, 0.55))
-        by = y0 + 3 + (frame * 3) % 5
+        d.ellipse([cx - w // 2 + 2, y0 + 2, cx - w // 2 + 3, y0 + 3], fill=(255, 255, 255))
+        d.rectangle([cx - 1, y0 - 4, cx + 1, y0 + 1], fill=(230, 230, 230))
+        by = y0 + 3 + (frame * 3) % 4
         d.point((cx + 1 - frame, by), fill=(255, 255, 255))
-        d.point((cx + 2, by + 3 - frame), fill=mul(col, 1.7))
         if frame:
-            d.point((cx - 1, y0 - 6), fill=mul(col, 1.7))
+            d.point((cx - 1, y0 - 6), fill=col)
+            d.point((cx + 1, y0 - 8), fill=col)
         return im
 
     def sword_cell(self, frame):
         im = self.floor_cell()
         d = ImageDraw.Draw(im)
-        d.line([6, FEET - 3, 24, FEET - 9], fill=(214, 224, 238), width=2)
-        d.line([6, FEET - 4, 24, FEET - 10], fill=(250, 252, 255))
-        d.rectangle([3, FEET - 5, 6, FEET - 2], fill=(150, 100, 40))
-        d.line([8, FEET - 7, 9, FEET - 1], fill=(226, 180, 60), width=2)
+        d.line([7, FEET, 25, FEET - 5], fill=(255, 255, 255), width=1)
+        d.line([7, FEET + 1, 25, FEET - 4], fill=(190, 199, 207))
+        d.rectangle([4, FEET - 2, 7, FEET + 1], fill=(186, 146, 0))
+        d.line([9, FEET - 3, 9, FEET + 2], fill=(255, 255, 0), width=1)
         if frame:
-            d.line([25, FEET - 14, 25, FEET - 6], fill=(255, 255, 255))
-            d.line([21, FEET - 10, 29, FEET - 10], fill=(255, 255, 255))
+            d.line([26, FEET - 11, 26, FEET - 5], fill=(255, 255, 255))
+            d.line([23, FEET - 8, 29, FEET - 8], fill=(255, 255, 255))
         return im
 
     def mirror_cell(self, broken):
-        t = self.t
         im = self.floor_cell()
         d = ImageDraw.Draw(im)
-        gold = (226, 186, 66)
-        d.rectangle([6, 4, 25, SLAB_TOP], fill=gold)
-        d.rectangle([8, 6, 23, SLAB_TOP - 2], fill=(140, 196, 232) if not broken else (24, 26, 40))
+        gold = (186, 146, 0)
+        d.rectangle([6, 1, 25, SLAB_TOP], fill=gold)
+        d.rectangle([8, 3, 23, SLAB_TOP - 2], fill=(73, 146, 255) if not broken else (0, 0, 0))
         if not broken:
-            for k in range(0, 40, 9):
-                d.line([8, 6 + k + 8, 23, 6 + k - 4], fill=(214, 238, 255))
-            d.line([10, 8, 10, SLAB_TOP - 4], fill=(190, 226, 250))
+            for k in range(0, 30, 9):
+                d.line([8, 3 + k + 8, 23, 3 + k - 4], fill=(190, 230, 255))
         else:
-            for pts in (((8, 6), (14, 18), (9, 30)), ((23, 6), (17, 20), (22, 34)), ((12, 48), (16, 36), (21, 47))):
-                d.polygon(pts, fill=(150, 200, 235))
-            d.line([(8, 6), (16, 26), (23, 50)], fill=(10, 10, 16))
+            for pts in (((8, 3), (14, 14), (9, 24)), ((23, 3), (17, 16), (22, 28)), ((12, 38), (16, 28), (21, 37))):
+                d.polygon(pts, fill=(73, 146, 255))
+        return im
+
+    def shaft_cell(self):
+        # Open shaft above a pit: a dark cavity rather than the lit back wall.
+        im = self.bg()
+        px = im.load()
+        for y in range(TH):
+            for x in range(TW):
+                px[x, y] = mul(px[x, y], 0.3)
+        return im
+
+    def pit_cell(self):
+        im = self.bg()
+        px = im.load()
+        for y in range(TH):
+            f = max(0.0, 0.8 - y * 0.0125)
+            for x in range(TW):
+                px[x, y] = mul(px[x, y], f)
         return im
 
 
-def build_theme(theme):
-    """name -> list of images (states). Wall variants 0..3 are baked into the name suffix."""
+def build_theme(level):
+    """name -> list of images (states). Variant 0 is a plain background, variants 1 and 2 carry decoration and rugs (the second mirrored)."""
     out = {}
-    for v in range(4):
-        p = Painter(theme, v)
+    for v in range(3):
+        p = Painter(level, v)
         s = f"_{v}"
-        out["empty" + s] = [p.wall()]
+        out["empty" + s] = [p.bg()]
         out["pit" + s] = [p.pit_cell()]
+        out["shaft" + s] = [p.shaft_cell()]
         out["floor" + s] = [p.floor_cell()]
         out["pillar" + s] = [p.pillar_cell()]
-        out["block" + s] = [p.block_cell()]
+        out["block" + s] = [p.wall_cell()]
+        out["blockr" + s] = [p.wall_side_cell()]
         out["loose" + s] = [p.floor_cell(cracks=True), p.floor_cell(dy=-1, cracks=True), p.floor_cell(dy=1, cracks=True)]
         out["rubble" + s] = [p.floor_cell(rubble=True)]
         out["torch" + s] = [p.torch_cell(f) for f in range(6)]
@@ -352,4 +438,5 @@ def build_theme(theme):
             out["potion_" + kind + s] = [p.potion_cell(kind, f) for f in range(2)]
         out["sword" + s] = [p.sword_cell(0), p.sword_cell(1)]
         out["mirror" + s] = [p.mirror_cell(False), p.mirror_cell(True)]
+    out["under"] = [Painter(level, 0).under_band()]
     return out

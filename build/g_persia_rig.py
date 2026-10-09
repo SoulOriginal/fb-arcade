@@ -1,15 +1,15 @@
-# Build-time only: a 2D skeletal rig that draws side-view fighters (prince, guards, skeleton, shadow) at
-# 320x200 logical resolution. Poses are joint angles, so in-between frames are plain interpolation - this is
-# what gives the rotoscope-like fluidity without any hand-drawn bitmaps.
+# Build-time only: a 2D skeletal rig that draws side-view fighters in the flat, outline-free pixel-art style of the
+# 1989 DOS game (cream clothes, pink skin, gold hair, hard 1-pixel shadows). Poses are joint angles, so in-between
+# frames are plain interpolation. Everything here is drawn procedurally; no pixel of the original is copied.
 import math
 from PIL import Image, ImageDraw
 
-SS = 4                       # supersampling factor before the down-scale to logical pixels
-CW, CH = 112, 112            # logical canvas
-GX, GY = 56, 96              # hip x anchor and ground line inside the canvas
+SS = 4                       # supersampling; downsampled with NEAREST so edges stay crisp like pixel art
+CW, CH = 96, 96              # logical canvas
+GX, GY = 48, 84              # hip x anchor and ground line inside the canvas
 
 NAMES = ["lean", "head", "ra_s", "ra_e", "fa_s", "fa_e", "rl_t", "rl_k", "fl_t", "fl_k", "swa", "swl", "item"]
-STAND = dict(lean=2, head=0, ra_s=-6, ra_e=10, fa_s=7, fa_e=12, rl_t=-4, rl_k=0, fl_t=5, fl_k=-2,
+STAND = dict(lean=1, head=0, ra_s=-4, ra_e=8, fa_s=5, fa_e=10, rl_t=-3, rl_k=0, fl_t=3, fl_k=-1,
              swa=0, swl=0, item=0)
 
 
@@ -23,7 +23,6 @@ def P(**kw):
 
 
 def mirror_limbs(p):
-    # Swaps near and far limbs: the second half of every walk/run cycle.
     q = dict(p)
     for a, b in (("ra_s", "fa_s"), ("ra_e", "fa_e"), ("rl_t", "fl_t"), ("rl_k", "fl_k")):
         q[a], q[b] = p[b], p[a]
@@ -31,7 +30,6 @@ def mirror_limbs(p):
 
 
 def lerp_pose(a, b, t):
-    # Smoothstep keeps limbs from snapping at key poses.
     t = t * t * (3 - 2 * t)
     return {k: a[k] + (b[k] - a[k]) * t for k in a}
 
@@ -59,26 +57,36 @@ def shade(c, f):
     return tuple(max(0, min(255, int(v * f))) for v in c)
 
 
-PRINCE = Palette(kind="human", shirt=(238, 238, 244), pants=(226, 226, 236), vest=(176, 48, 40), sash=(196, 52, 44),
-                 skin=(224, 172, 122), turban=(248, 248, 252), shoes=(132, 78, 44), hair=(34, 28, 28),
-                 outline=(46, 34, 44), girth=1.0, scale=1.0, mustache=False, blade=(214, 224, 236))
-GUARD_BLUE = Palette(kind="human", shirt=(52, 70, 150), pants=(206, 200, 184), vest=(30, 36, 86), sash=(214, 176, 60),
-                     skin=(176, 124, 86), turban=(46, 62, 138), shoes=(70, 46, 30), hair=(24, 20, 20),
-                     outline=(24, 20, 32), girth=1.15, scale=1.03, mustache=True, blade=(206, 214, 226))
-GUARD_RED = Palette(kind="human", shirt=(166, 40, 40), pants=(196, 188, 170), vest=(90, 20, 24), sash=(214, 176, 60),
-                    skin=(176, 124, 86), turban=(150, 34, 36), shoes=(70, 46, 30), hair=(24, 20, 20),
-                    outline=(32, 14, 18), girth=1.15, scale=1.03, mustache=True, blade=(206, 214, 226))
-GUARD_FAT = Palette(kind="human", shirt=(150, 96, 40), pants=(180, 170, 140), vest=(100, 56, 20), sash=(210, 60, 50),
-                    skin=(190, 134, 94), turban=(190, 150, 60), shoes=(70, 46, 30), hair=(24, 20, 20),
-                    outline=(40, 26, 12), girth=1.85, scale=1.14, mustache=True, blade=(206, 214, 226))
-SKELETON = Palette(kind="skel", bone=(228, 226, 204), dark=(30, 28, 30), outline=(20, 18, 24), girth=1.0, scale=1.03,
-                   blade=(190, 196, 206))
-SHADOW = Palette(kind="human", shirt=(24, 26, 56), pants=(20, 22, 48), vest=(14, 16, 36), sash=(40, 44, 90),
-                 skin=(34, 36, 70), turban=(28, 30, 62), shoes=(14, 14, 30), hair=(10, 10, 20),
-                 outline=(96, 110, 200), girth=1.0, scale=1.0, mustache=False, blade=(120, 140, 230))
+# Palette values are the 16-colour VGA-style tones read off the reference frames (cream, pink skin, gold hair).
+SKIN, SKIN_D = (223, 130, 109), (178, 113, 97)
+PRINCE = Palette(kind="human", style="prince", cloth=(255, 255, 219), cloth_d=(214, 208, 172), skin=SKIN, skin_d=SKIN_D,
+                 hair=(121, 93, 56), hair_hi=(186, 146, 0), belt=(186, 146, 0), shoes=SKIN, scale=1.0, girth=1.0,
+                 blade=(255, 255, 255))
 
-L_THIGH, L_SHIN, L_TORSO, L_ARM, L_FORE = 10.5, 10.5, 15.0, 7.2, 7.2
-HEAD_R = 4.9
+
+def guard_pal(coat, sleeve, trousers, sash, turban=(255, 255, 255), fat=False, beard=False):
+    return Palette(kind="human", style="guard", coat=coat, coat_d=shade(coat, 0.8), sleeve=sleeve, trousers=trousers,
+                   trousers_d=shade(trousers, 0.72), sash=sash, turban=turban, turban_d=shade(turban, 0.8), skin=SKIN,
+                   skin_d=SKIN_D, shoes=(235, 186, 113), hair=(40, 30, 30), scale=1.04 if not fat else 1.1,
+                   girth=1.7 if fat else 1.0, beard=beard, blade=(255, 255, 255))
+
+
+GUARDS = {
+    "g_blue": guard_pal((255, 219, 255), (73, 146, 255), (73, 146, 255), (130, 40, 121)),
+    "g_red": guard_pal((231, 100, 100), (255, 219, 200), (186, 40, 40), (255, 219, 0), beard=True),
+    "g_green": guard_pal((120, 200, 120), (255, 255, 219), (48, 130, 80), (186, 146, 0)),
+    "g_dark": guard_pal((100, 100, 140), (170, 170, 190), (60, 60, 100), (231, 0, 0), turban=(200, 200, 215), beard=True),
+    "g_gold": guard_pal((235, 186, 113), (255, 255, 219), (186, 70, 40), (130, 40, 121), turban=(255, 219, 255)),
+    "g_fat": guard_pal((255, 134, 60), (255, 219, 162), (170, 100, 60), (231, 0, 0), turban=(255, 219, 0), fat=True, beard=True),
+    "g_vizier": guard_pal((130, 40, 121), (60, 20, 90), (40, 20, 70), (255, 255, 0), turban=(186, 146, 0), beard=True),
+}
+SKELETON = Palette(kind="skel", bone=(240, 236, 214), dark=(30, 28, 30), scale=1.04, girth=1.0, blade=(190, 199, 207))
+SHADOW = Palette(kind="human", style="prince", cloth=(28, 48, 77), cloth_d=(12, 32, 60), skin=(48, 73, 110), skin_d=(28, 48, 77),
+                 hair=(12, 32, 60), hair_d=(12, 32, 60), belt=(48, 73, 110), shoes=(48, 73, 110), scale=1.0, girth=1.0,
+                 blade=(105, 130, 178), rim=(105, 130, 178))
+
+L_THIGH, L_SHIN, L_TORSO, L_ARM, L_FORE = 8.4, 8.4, 12.5, 6.0, 6.0
+HEAD_R = 3.4
 
 
 def _dir_down(a):
@@ -94,7 +102,7 @@ def skeleton_points(p, sc):
     sh = (tor * math.sin(lr), -tor * math.cos(lr))
     pts["sho"] = sh
     hr = math.radians(p["lean"] + p["head"])
-    hl = (3.2 + HEAD_R) * sc
+    hl = (2.4 + HEAD_R) * sc
     pts["head"] = (sh[0] + hl * math.sin(hr), sh[1] - hl * math.cos(hr))
     for side in ("r", "f"):
         t, k = p[side + "l_t"], p[side + "l_k"]
@@ -103,8 +111,8 @@ def skeleton_points(p, sc):
         dx, dy = _dir_down(t + k)
         fo = (kn[0] + ls * dx, kn[1] + ls * dy)
         a = math.radians(t + k)
-        toe = (fo[0] + 5.5 * sc * math.cos(a), fo[1] - 5.5 * sc * math.sin(a))
-        heel = (fo[0] - 1.5 * sc * math.cos(a), fo[1] + 1.5 * sc * math.sin(a))
+        toe = (fo[0] + 4.4 * sc * math.cos(a), fo[1] - 4.4 * sc * math.sin(a))
+        heel = (fo[0] - 1.2 * sc * math.cos(a), fo[1] + 1.2 * sc * math.sin(a))
         pts[side + "knee"], pts[side + "foot"], pts[side + "toe"], pts[side + "heel"] = kn, fo, toe, heel
         s, e = p[side + "a_s"], p[side + "a_e"]
         dx, dy = _dir_down(s)
@@ -130,8 +138,8 @@ def render(p, pal, flip=False):
     """Returns (RGBA logical image CWxCH, hang_height). Ground line at GY, hip x at GX."""
     sc = pal.scale
     pts = skeleton_points(p, sc)
-    low = max(max(pts[k][1] for k in ("rfoot", "ffoot", "rtoe", "ftoe", "rheel", "fheel")) + 1.6,
-              pts["rwri"][1] + 1.5, pts["fwri"][1] + 1.5, pts["hip"][1] + 4, pts["sho"][1] + 4, pts["head"][1] + HEAD_R,
+    low = max(max(pts[k][1] for k in ("rfoot", "ffoot", "rtoe", "ftoe", "rheel", "fheel")) + 0.8,
+              pts["rwri"][1] + 1.2, pts["fwri"][1] + 1.2, pts["hip"][1] + 3, pts["sho"][1] + 3, pts["head"][1] + HEAD_R,
               pts["rknee"][1] + 2, pts["fknee"][1] + 2)
     ox, oy = GX, GY - low
     big = Image.new("RGBA", (CW * SS, CH * SS), (0, 0, 0, 0))
@@ -148,121 +156,144 @@ def render(p, pal, flip=False):
         d.ellipse([x - r * SS, y - r * SS, x + r * SS, y + r * SS], fill=col)
 
     g = pal.girth
+    hr = math.radians(p["lean"] + p["head"])
+    up = (math.sin(hr), -math.cos(hr))
+    fw = (math.cos(hr), math.sin(hr))
+    hc = pts["head"]
+    hx, hy = pts["hip"]
+    sx, sy = pts["sho"]
     if pal.kind == "skel":
         bone, dark = pal.bone, pal.dark
 
         def leg(side, k):
-            limb(pts["hip"], pts[side + "knee"], 2.4, 2.0, shade(bone, k))
-            limb(pts[side + "knee"], pts[side + "foot"], 2.0, 1.8, shade(bone, k))
-            limb(pts[side + "heel"], pts[side + "toe"], 2.0, 2.0, shade(bone, k))
-            disc(pts[side + "knee"], 1.7, shade(bone, k))
+            limb(pts["hip"], pts[side + "knee"], 2.2, 1.8, shade(bone, k))
+            limb(pts[side + "knee"], pts[side + "foot"], 1.8, 1.6, shade(bone, k))
+            limb(pts[side + "heel"], pts[side + "toe"], 1.6, 1.6, shade(bone, k))
+            disc(pts[side + "knee"], 1.5, shade(bone, k))
 
         def arm(side, k):
-            limb(pts["sho"], pts[side + "elb"], 2.0, 1.8, shade(bone, k))
-            limb(pts[side + "elb"], pts[side + "wri"], 1.8, 1.5, shade(bone, k))
-            disc(pts[side + "wri"], 1.6, shade(bone, k))
-            disc(pts[side + "elb"], 1.5, shade(bone, k))
+            limb(pts["sho"], pts[side + "elb"], 1.8, 1.6, shade(bone, k))
+            limb(pts[side + "elb"], pts[side + "wri"], 1.6, 1.4, shade(bone, k))
+            disc(pts[side + "wri"], 1.4, shade(bone, k))
 
-        arm("r", 0.72)
-        leg("r", 0.72)
-        limb(pts["hip"], pts["sho"], 2.0, 2.0, bone)
-        sx, sy = pts["sho"]
-        hx, hy = pts["hip"]
+        arm("r", 0.7)
+        leg("r", 0.7)
+        limb(pts["hip"], pts["sho"], 1.8, 1.8, bone)
         dxn, dyn = sx - hx, sy - hy
         nrm = math.hypot(dxn, dyn) or 1
         px_, py_ = -dyn / nrm, dxn / nrm
         for i in range(1, 6):
             f = i / 6.2
             cx, cy = hx + dxn * f, hy + dyn * f
-            wdt = 4.2 - abs(f - 0.5) * 2.0
-            limb((cx - px_ * wdt, cy - py_ * wdt), (cx + px_ * wdt, cy + py_ * wdt), 1.5, 1.5, bone)
-        limb((hx - px_ * 3.4, hy - py_ * 3.4), (hx + px_ * 3.4, hy + py_ * 3.4), 2.6, 2.6, bone)
+            wdt = 3.6 - abs(f - 0.5) * 1.6
+            limb((cx - px_ * wdt, cy - py_ * wdt), (cx + px_ * wdt, cy + py_ * wdt), 1.3, 1.3, bone)
+        limb((hx - px_ * 3.0, hy - py_ * 3.0), (hx + px_ * 3.0, hy + py_ * 3.0), 2.2, 2.2, bone)
         leg("f", 1.0)
-        hc = pts["head"]
-        disc(hc, 4.6 * sc, bone)
-        hxv = math.radians(p["lean"] + p["head"])
-        fx, fy = math.cos(hxv), math.sin(hxv)
-        disc((hc[0] + 2.4 * fx, hc[1] + 0.6 - 0.4 * fy), 1.3, dark)
-        limb((hc[0] + 1.0, hc[1] + 3.4), (hc[0] + 3.4, hc[1] + 3.6), 1.8, 1.8, shade(bone, 0.85))
+        disc(hc, 3.9 * sc, bone)
+        disc((hc[0] + fw[0] * 1.9, hc[1] + fw[1] * 1.9 - 0.4), 1.1, dark)
+        limb((hc[0] + fw[0] * 1.2 - up[0] * 2.8, hc[1] + fw[1] * 1.2 - up[1] * 2.8),
+             (hc[0] + fw[0] * 3.2 - up[0] * 2.8, hc[1] + fw[1] * 3.2 - up[1] * 2.8), 1.6, 1.6, shade(bone, 0.85))
         arm("f", 1.0)
         col_blade = pal.blade
-    else:
-        cs = pal
-        gl = 1.0 + (g - 1.0) * 0.45
+    elif pal.style == "prince":
+        c = pal
 
         def leg(side, k):
-            limb(pts["hip"], pts[side + "knee"], 6.5 * gl, 5.5 * gl, shade(cs.pants, k))
-            limb(pts[side + "knee"], pts[side + "foot"], 5.3 * gl, 4.0, shade(cs.pants, k))
-            limb(pts[side + "heel"], pts[side + "toe"], 3.0, 2.6, shade(cs.shoes, k))
+            kn, fo = pts[side + "knee"], pts[side + "foot"]
+            col = c.cloth if k >= 1 else c.cloth_d
+            limb(pts["hip"], kn, 6.0, 5.4, col)
+            limb(kn, fo, 5.4, 3.4, col)
+            mid = (kn[0] * 0.45 + fo[0] * 0.55, kn[1] * 0.45 + fo[1] * 0.55 - 0.2)
+            disc(mid, 3.0, col)
+            limb(pts[side + "heel"], pts[side + "toe"], 2.2, 2.0, c.skin if k >= 1 else c.skin_d)
+            disc(fo, 1.8, c.skin if k >= 1 else c.skin_d)
 
         def arm(side, k):
-            limb(pts["sho"], pts[side + "elb"], 4.7 * gl, 4.1 * gl, shade(cs.shirt, k))
-            limb(pts[side + "elb"], pts[side + "wri"], 3.8 * gl, 3.1, shade(cs.skin, k))
-            disc(pts[side + "wri"], 2.2, shade(cs.skin, k))
+            col = c.skin if k >= 1 else c.skin_d
+            limb(pts["sho"], pts[side + "elb"], 2.8, 2.4, col)
+            limb(pts[side + "elb"], pts[side + "wri"], 2.4, 2.0, col)
+            disc(pts[side + "wri"], 1.5, col)
 
-        arm("r", 0.74)
-        leg("r", 0.76)
-        hx, hy = pts["hip"]
-        sx, sy = pts["sho"]
-        limb((hx, hy), (sx, sy), 9.2 * g, 10.6 * g, cs.shirt)
-        dxn, dyn = sx - hx, sy - hy
-        nrm = math.hypot(dxn, dyn) or 1
-        px_, py_ = -dyn / nrm, dxn / nrm
-        # Vest: a darker panel on the front half of the torso.
-        a0 = (hx + dxn * 0.12 + px_ * 0.0, hy + dyn * 0.12)
-        limb((a0[0] + 0.3 * g, a0[1]), (sx - dxn * 0.05 + 0.6 * g, sy - dyn * 0.05), 4.2 * g, 4.4 * g, cs.vest)
-        disc((hx + dxn * 0.1, hy + dyn * 0.1), 4.2 * g, cs.sash)
-        leg("f", 1.0)
-        hc = pts["head"]
-        hr = math.radians(p["lean"] + p["head"])
-        up = (math.sin(hr), -math.cos(hr))
-        fw = (math.cos(hr), math.sin(hr))
-        limb((sx, sy), (hc[0] - up[0] * 1.0, hc[1] - up[1] * 1.0), 3.0, 3.0, cs.skin)
-        disc(hc, HEAD_R * sc, cs.skin)
-        disc((hc[0] - fw[0] * 2.2 - up[0] * 0.6, hc[1] - fw[1] * 2.2 - up[1] * 0.6), 2.6, cs.hair)
-        disc((hc[0] + fw[0] * 4.0 + up[0] * 0.2, hc[1] + fw[1] * 4.0), 1.2 * sc, cs.skin)
-        disc((hc[0] + fw[0] * 2.2 - up[0] * 0.8, hc[1] + fw[1] * 2.2 - up[1] * 0.8), 0.75, (20, 20, 24))
-        if cs.mustache:
-            limb((hc[0] + fw[0] * 3.0 + up[0] * -1.8, hc[1] + fw[1] * 3.0 - up[1] * 1.8),
-                 (hc[0] + fw[0] * 4.6 + up[0] * -1.6, hc[1] + fw[1] * 4.6 - up[1] * 1.6), 1.1, 1.1, (20, 16, 16))
-        # Turban: a wrapped cloth dome plus a band.
-        tc = (hc[0] + up[0] * 2.0 - fw[0] * 0.5, hc[1] + up[1] * 2.0 - fw[1] * 0.5)
-        disc(tc, 5.5 * sc, cs.turban)
-        limb((tc[0] - fw[0] * 4.2 - up[0] * 0.2, tc[1] - fw[1] * 4.2 - up[1] * 0.2),
-             (tc[0] + fw[0] * 4.4 - up[0] * 0.6, tc[1] + fw[1] * 4.4 - up[1] * 0.6), 1.4, 1.4, shade(cs.turban, 0.78))
-        arm("f", 1.0)
-        col_blade = cs.blade
-    # Item (potion flask) and sword are held in the near hand.
+        arm("r", 0)
+        leg("r", 0)
+        limb((hx, hy), (sx, sy), 6.2, 7.0, c.cloth)
+        bx0, by0 = T((hx - 3.2, hy - 1.6))
+        bx1, by1 = T((hx + 3.4, hy - 0.2))
+        d.rectangle([bx0, by0, bx1, by1], fill=c.belt)
+        leg("f", 1)
+        limb((sx, sy), (hc[0] - up[0] * 0.8, hc[1] - up[1] * 0.8), 2.6, 2.6, c.skin)
+        disc(hc, HEAD_R * sc, c.skin)
+        disc((hc[0] - fw[0] * 0.9 + up[0] * 1.1, hc[1] - fw[1] * 0.9 + up[1] * 1.1), 3.2 * sc, c.hair)
+        limb((hc[0] - fw[0] * 3.0 + up[0] * 0.2, hc[1] - fw[1] * 3.0 + up[1] * 0.2),
+             (hc[0] - fw[0] * 2.4 - up[0] * 2.4, hc[1] - fw[1] * 2.4 - up[1] * 2.4), 2.0, 1.8, c.hair)
+        if hasattr(c, "hair_hi"):
+            disc((hc[0] + up[0] * 2.4 + fw[0] * 0.2, hc[1] + up[1] * 2.4 + fw[1] * 0.2), 1.7, c.hair_hi)
+        disc((hc[0] + fw[0] * 2.6 + up[0] * 0.2, hc[1] + fw[1] * 2.6 + up[1] * 0.2), 1.1, c.skin)
+        disc((hc[0] + fw[0] * 1.7 - up[0] * 0.5, hc[1] + fw[1] * 1.7 - up[1] * 0.5), 0.55, (40, 20, 10))
+        arm("f", 1)
+        col_blade = c.blade
+    else:
+        c = pal
+        gl = 1.0 + (g - 1.0) * 0.5
+
+        def leg(side, k):
+            col = c.trousers if k >= 1 else c.trousers_d
+            kn, fo = pts[side + "knee"], pts[side + "foot"]
+            limb(pts["hip"], kn, 5.0 * gl, 4.4 * gl, col)
+            limb(kn, fo, 4.2 * gl, 3.0, col)
+            limb(pts[side + "heel"], pts[side + "toe"], 2.4, 2.0, c.shoes)
+            disc(fo, 1.9, c.shoes)
+
+        def arm(side, k):
+            col = c.sleeve if k >= 1 else shade(c.sleeve, 0.75)
+            limb(pts["sho"], pts[side + "elb"], 3.2 * gl, 2.8 * gl, col)
+            limb(pts[side + "elb"], pts[side + "wri"], 2.8 * gl, 2.2, col)
+            disc(pts[side + "wri"], 1.5, c.skin)
+
+        arm("r", 0)
+        leg("r", 0)
+        limb((hx, hy), (sx, sy), 7.0 * g, 8.0 * g, c.coat)
+        kavg = ((pts["rknee"][0] + pts["fknee"][0]) / 2 * 0.85, (pts["rknee"][1] + pts["fknee"][1]) / 2 * 0.85 + 1.0)
+        wsk = 5.6 * g
+        d.polygon([T((hx - wsk * 0.8, hy - 1)), T((hx + wsk * 0.8, hy - 1)), T((kavg[0] + wsk, kavg[1])), T((kavg[0] - wsk, kavg[1]))],
+                  fill=c.coat_d)
+        limb((hx - 0.2, hy - 1.2), (hx + 0.2, hy - 0.8), 7.6 * g, 7.6 * g, c.sash)
+        leg("f", 1)
+        limb((sx, sy), (hc[0] - up[0] * 0.5, hc[1] - up[1] * 0.5), 2.6, 2.6, c.skin)
+        disc(hc, 3.2 * sc, c.skin)
+        if c.beard:
+            disc((hc[0] + fw[0] * 1.6 - up[0] * 1.8, hc[1] + fw[1] * 1.6 - up[1] * 1.8), 1.7, (50, 30, 30))
+        disc((hc[0] + fw[0] * 2.0 - up[0] * 0.3, hc[1] + fw[1] * 2.0 - up[1] * 0.3), 0.55, (30, 20, 10))
+        disc((hc[0] + fw[0] * 3.0, hc[1] + fw[1] * 3.0), 0.9, c.skin)
+        tc = (hc[0] + up[0] * 1.7, hc[1] + up[1] * 1.7)
+        disc(tc, 4.6 * sc, c.turban)
+        limb((tc[0] - fw[0] * 3.6 - up[0] * 1.2, tc[1] - fw[1] * 3.6 - up[1] * 1.2),
+             (tc[0] + fw[0] * 3.6 - up[0] * 1.6, tc[1] + fw[1] * 3.6 - up[1] * 1.6), 1.3, 1.3, c.turban_d)
+        arm("f", 1)
+        col_blade = c.blade
     wr = pts["fwri"]
     if p["swl"] > 0.02:
         a = math.radians(p["swa"])
-        bl = 27.0 * p["swl"]
+        bl = 24.0 * p["swl"]
         dxv, dyv = math.sin(a), math.cos(a)
         tip = (wr[0] + bl * dxv, wr[1] + bl * dyv)
-        limb(wr, tip, 1.9, 1.0, col_blade)
-        gx_, gy_ = wr[0] + 1.5 * dxv, wr[1] + 1.5 * dyv
-        limb((gx_ - dyv * 3.0, gy_ + dxv * 3.0), (gx_ + dyv * 3.0, gy_ - dxv * 3.0), 1.4, 1.4, (214, 176, 60))
+        limb(wr, tip, 1.5, 0.9, col_blade)
+        gx_, gy_ = wr[0] + 1.2 * dxv, wr[1] + 1.2 * dyv
+        limb((gx_ - dyv * 2.2, gy_ + dxv * 2.2), (gx_ + dyv * 2.2, gy_ - dxv * 2.2), 1.2, 1.2, (186, 146, 0))
     if p["item"] > 0.5:
         fx, fy = wr
-        flask = {1: (214, 40, 40), 2: (60, 90, 230), 3: (60, 200, 90)}[int(round(p["item"]))] if p["item"] < 3.5 else (214, 40, 40)
-        d.ellipse([(ox + fx - 2.4) * SS, (oy + fy - 4.8) * SS, (ox + fx + 2.4) * SS, (oy + fy + 0.6) * SS], fill=flask)
-        d.rectangle([(ox + fx - 0.9) * SS, (oy + fy - 7.2) * SS, (ox + fx + 0.9) * SS, (oy + fy - 4.2) * SS], fill=(230, 230, 230))
-    small = big.resize((CW, CH), Image.BOX)
+        flask = {1: (231, 0, 0), 2: (73, 146, 255), 3: (60, 200, 90)}[int(round(p["item"]))] if p["item"] < 3.5 else (231, 0, 0)
+        d.ellipse([(ox + fx - 2.0) * SS, (oy + fy - 4.0) * SS, (ox + fx + 2.0) * SS, (oy + fy + 0.6) * SS], fill=flask)
+        d.rectangle([(ox + fx - 0.8) * SS, (oy + fy - 6.0) * SS, (ox + fx + 0.8) * SS, (oy + fy - 3.6) * SS], fill=(230, 230, 230))
+    small = big.resize((CW, CH), Image.NEAREST)
     px = small.load()
-    outline = pal.outline
-    solid = [[False] * CW for _ in range(CH)]
-    for y in range(CH):
-        for x in range(CW):
-            r, gg, b, a = px[x, y]
-            if a >= 120:
-                px[x, y] = (r, gg, b, 255)
-                solid[y][x] = True
-            else:
-                px[x, y] = (0, 0, 0, 0)
-    for y in range(1, CH - 1):
-        for x in range(1, CW - 1):
-            if not solid[y][x] and (solid[y - 1][x] or solid[y + 1][x] or solid[y][x - 1] or solid[y][x + 1]):
-                px[x, y] = outline + (255,)
+    rim = getattr(pal, "rim", None)
+    if rim:
+        solid = [[px[x, y][3] > 0 for x in range(CW)] for y in range(CH)]
+        for y in range(1, CH - 1):
+            for x in range(1, CW - 1):
+                if solid[y][x] and not (solid[y - 1][x] and solid[y][x - 1] and solid[y][x + 1] and solid[y + 1][x]):
+                    px[x, y] = rim + (255,)
     if flip:
         small = small.transpose(Image.FLIP_LEFT_RIGHT)
     hang_h = low - min(pts["rwri"][1], pts["fwri"][1])
