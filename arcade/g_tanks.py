@@ -55,7 +55,7 @@ def text(s, x, y, variant):
 
 class Tank:
     __slots__ = ("x", "y", "d", "kind", "hp", "flash", "acc", "dist", "spawn", "bullets", "slide", "shield",
-                 "level", "blocked")
+                 "level", "blocked", "cool")
 
     def __init__(self, x, y, d, kind):
         self.x, self.y, self.d, self.kind = x, y, d, kind
@@ -69,6 +69,7 @@ class Tank:
         self.shield = 0
         self.level = 0
         self.blocked = False
+        self.cool = 0                    # ticks to wait before the next turn decision: no spinning in place
 
 
 class Bullet:
@@ -184,6 +185,9 @@ class Game:
         self.hold = 0
         self.stuck = 0
         self.last_pos = None
+        self.spin_hist = []
+        self.calm = 0
+        self.calm_dir = 0
         self.wander = 0
         self.wander_dir = 0
         self.home_cell = None
@@ -786,6 +790,21 @@ class Game:
         first, second = (vert, horiz) if abs(dy) >= abs(dx) else (horiz, vert)
         return first if random.random() < 0.7 else second
 
+    def step_free(self, t, d):
+        return self.can_place(t, t.x + DIRS[d][0], t.y + DIRS[d][1])
+
+    def enemy_turn(self, e):
+        # Only directions that lead somewhere: picking a blocked one every tick made tanks spin on the spot.
+        free = [d for d in range(4) if d != e.d and self.step_free(e, d)]
+        if not free:
+            e.cool = 15
+            return
+        nd = self.enemy_choose_dir(e)
+        if nd not in free:
+            nd = random.choice(free)
+        self.turn(e, nd)
+        e.cool = 4
+
     def update_enemies(self):
         frozen = self.freeze > 0
         for e in self.enemies:
@@ -794,6 +813,8 @@ class Game:
                 continue
             if frozen:
                 continue
+            if e.cool:
+                e.cool -= 1
             e.acc += ENEMY_SPEED[e.kind]
             steps = int(e.acc)
             e.acc -= steps
@@ -801,13 +822,15 @@ class Game:
                 if not self.move(e, e.d, 1):
                     # only a wall justifies the hail of shots; a tank in the way is just a traffic jam
                     e.blocked = not self.terrain_ok(e.x + DIRS[e.d][0], e.y + DIRS[e.d][1])
-                    if e.x & 7 == 0 and e.y & 7 == 0:
-                        nd = self.enemy_choose_dir(e)
-                        if nd == e.d:
-                            nd = (e.d + random.choice((1, 3))) & 3
-                        self.turn(e, nd)
+                    if e.cool:
+                        pass
+                    elif not e.blocked:
+                        e.cool = 12                  # another tank is in the way: wait for it instead of turning round
+                    elif e.x & 7 == 0 and e.y & 7 == 0:
+                        self.enemy_turn(e)
                     elif random.random() < 0.3:
                         e.d = OPPOSITE[e.d]          # off the grid a sideways turn is impossible, backing out is not
+                        e.cool = 6
                     break
                 e.blocked = False
                 if e.x & 7 == 0 and e.y & 7 == 0 and random.random() < 0.1:
@@ -982,7 +1005,12 @@ class Game:
         if p is None or p.spawn:
             return None, False
         can_fire = p.bullets < (2 if p.level >= 2 else 1)
-        want, fire = self.desire(p, can_fire)
+        self.spin_check(p)
+        if self.calm:
+            self.calm -= 1
+            want, fire = self.calm_dir, False
+        else:
+            want, fire = self.desire(p, can_fire)
         # shooting first beats ducking: a tank we are about to hit does not count as a threat
         infos = self.danger_infos(p, not (fire and want is None), want is None)
         if not infos:
@@ -1003,6 +1031,8 @@ class Game:
                         return None, True
         options = [want, None] if want is not None else [None]
         options += [d for d in range(4) if d != want]
+        # A direction into a wall only turns the hull on the spot: dodging that way looked like spinning.
+        options = [d for d in options if d is None or d == want or self.step_free(p, d)]
         best, best_t = None, -1
         for d in options:
             t = self.unsafe_time(p, d, infos)
@@ -1011,6 +1041,29 @@ class Game:
             if t > best_t:
                 best, best_t = d, t
         return best, False
+
+    def spin_check(self, p):
+        # Turning back and forth without getting anywhere looks broken: when it happens, walk off in a direction
+        # that is actually open for a moment, then let the planner take over again.
+        h = self.spin_hist
+        h.append((p.x, p.y, p.d))
+        if len(h) > 24:
+            h.pop(0)
+        if len(h) < 24:
+            return
+        moved = abs(h[-1][0] - h[0][0]) + abs(h[-1][1] - h[0][1])
+        turns = sum(1 for a, b in zip(h, h[1:]) if a[2] != b[2])
+        if moved <= 2 and turns >= 4:
+            tried = {x[2] for x in h}
+            open_dirs = [d for d in range(4) if self.step_free(p, d)]
+            fresh = [d for d in open_dirs if d not in tried]
+            choice = fresh or open_dirs
+            if choice:
+                self.calm_dir = random.choice(choice)
+                self.calm = 14
+                self.path = []
+                self.path_age = 99
+            del h[:]
 
     def desire(self, p, can_fire):
         # What the bot would do with nobody shooting at it: take a clean shot, otherwise walk the plan.
