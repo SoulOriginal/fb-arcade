@@ -20,6 +20,31 @@ for by in range(BH):
             EU[BASE + by * BW + bx], EV[BASE + by * BW + bx] = by * BW + bx, (by + 1) * BW + bx
             VALID.append(BASE + by * BW + bx)
 DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1))
+APPLES = int(os.environ.get("SNAKE_APPLES", "200"))
+SHRINK_SHARE = 0.4
+MIN_SHRINK_LEN = 6
+
+
+def pick_bricks(rnd):
+    # Bricks are whole 2x2 blocks so that a Hamiltonian cycle through the remaining blocks still exists; the blocks
+    # under the start position stay free and the rest must stay connected.
+    for _ in range(1000):
+        n = rnd.randint(5, 9)
+        cand = [(bx, by) for bx in range(BW) for by in range(BH) if (bx, by) not in ((0, 0), (1, 0), (0, 1))]
+        bricks = set(rnd.sample(cand, n))
+        # no two bricks touching: they would merge into walls that cut the board into corridors
+        if any(((bx + dx, by + dy) in bricks) for bx, by in bricks for dx, dy in DIRS):
+            continue
+        seen, queue = {(0, 0)}, [(0, 0)]
+        for bx, by in queue:
+            for dx, dy in DIRS:
+                q = (bx + dx, by + dy)
+                if 0 <= q[0] < BW and 0 <= q[1] < BH and q not in bricks and q not in seen:
+                    seen.add(q)
+                    queue.append(q)
+        if len(seen) == BW * BH - len(bricks):
+            return bricks
+    raise RuntimeError("no brick layout found")
 
 
 def constraint(a, b):
@@ -40,8 +65,11 @@ def constraint(a, b):
 
 
 class Constraints:
-    def __init__(self):
+    def __init__(self, bricks):
         self.p, self.m = [0] * E, [0] * E
+        self.present = [i for i in range(BASE) if (i % BW, i // BW) not in bricks]
+        pres = set(self.present)
+        self.valid = [e for e in VALID if EU[e] in pres and EV[e] in pres]
 
     def add(self, a, b, d):
         c = constraint(a, b)
@@ -57,8 +85,8 @@ class Constraints:
                 par[x] = par[par[x]]
                 x = par[x]
             return x
-        comps = BASE
-        for e in VALID:
+        comps = len(self.present)
+        for e in self.valid:
             if p[e] > 0:
                 if m[e] > 0:
                     return False
@@ -67,7 +95,7 @@ class Constraints:
                     return False
                 par[ru] = rv
                 comps -= 1
-        for e in VALID:
+        for e in self.valid:
             if p[e] == 0 and m[e] == 0:
                 ru, rv = find(EU[e]), find(EV[e])
                 if ru != rv:
@@ -84,18 +112,18 @@ class Constraints:
                 x = par[x]
             return x
         edges = set()
-        for e in VALID:
+        for e in self.valid:
             if self.p[e] > 0:
                 par[find(EU[e])] = find(EV[e])
                 edges.add(e)
-        for e in VALID:
+        for e in self.valid:
             if self.p[e] == 0 and self.m[e] == 0 and find(EU[e]) != find(EV[e]):
                 par[find(EU[e])] = find(EV[e])
                 edges.add(e)
         return edges
 
 
-def cycle_from_tree(edges, head, neck):
+def cycle_from_tree(edges, head, neck, bricks):
     # Cell graph of the tree contour; returns the cycle as a list starting after the head.
     def has(e):
         return e in edges
@@ -106,6 +134,8 @@ def cycle_from_tree(edges, head, neck):
         adj.setdefault(b, []).append(a)
     for by in range(BH):
         for bx in range(BW):
+            if (bx, by) in bricks:
+                continue
             x, y = bx * 2, by * 2
             up = by > 0 and has(BASE + (by - 1) * BW + bx)
             down = by < BH - 1 and has(BASE + by * BW + bx)
@@ -126,7 +156,7 @@ def cycle_from_tree(edges, head, neck):
                 link((x, y + 1), (x, y + 2))
                 link((x + 1, y + 1), (x + 1, y + 2))
     prev, cur, out = neck, head, []
-    for _ in range(N):
+    for _ in range(4 * (BW * BH - len(bricks))):
         nxt = [c for c in adj[cur] if c != prev]
         assert len(adj[cur]) == 2, "cell degree is not 2"
         prev, cur = cur, nxt[0]
@@ -150,67 +180,88 @@ def bfs_from(food, blocked):
 
 def solve(seed, stall_limit=500):
     rnd = random.Random(seed)
+    bricks = pick_bricks(rnd)
+    brick_cells = {(bx * 2 + i, by * 2 + j) for bx, by in bricks for i in (0, 1) for j in (0, 1)}
     body = [(2, 0), (1, 0), (0, 0)]
     occ = set(body)
-    cons = Constraints()
+    cons = Constraints(bricks)
     for a, b in zip(body, body[1:]):
         cons.add(a, b, 1)
     assert cons.feasible()
-    free = lambda: [(x, y) for y in range(GH) for x in range(GW) if (x, y) not in occ]
-    food = rnd.choice(free())
+
+    def free_cells():
+        return [(x, y) for y in range(GH) for x in range(GW) if (x, y) not in occ and (x, y) not in brick_cells]
+
+    def new_food():
+        kind = 1 if len(body) >= MIN_SHRINK_LEN and rnd.random() < SHRINK_SHARE else 0
+        c = rnd.choice(free_cells())
+        return (c[0], c[1], kind)
+
+    food = new_food()
     foods, moves, since, follow = [food], [], 0, None
+    eaten = 0
+
+    def tail_edges(drop):
+        # the edges that disappear when `drop` tail cells are removed
+        return [(body[-1 - k - 1], body[-1 - k]) for k in range(drop)]
+
     while True:
         head, tail = body[0], body[-1]
+        fcell = food[:2]
         if follow is not None:
             n = follow.pop(0)
         else:
-            dist = bfs_from(food, occ - {tail})
+            dist = bfs_from(fcell, (occ - {tail}) | brick_cells)
             cands = []
             for k, (dx, dy) in enumerate(DIRS):
                 n = (head[0] + dx, head[1] + dy)
-                if 0 <= n[0] < GW and 0 <= n[1] < GH and (n not in occ or n == tail) and n in dist:
+                if 0 <= n[0] < GW and 0 <= n[1] < GH and n not in brick_cells and (n not in occ or n == tail) and n in dist:
                     straight = 0 if len(body) > 1 and (head[0] - body[1][0], head[1] - body[1][1]) == (dx, dy) else 1
                     cands.append((dist[n], straight, k, n))
             cands.sort()
             n = None
             for _, _, _, c in cands:
-                eat = c == food
+                eat = c == fcell
+                drop = 0 if eat and food[2] == 0 else (2 if eat else 1)
+                removed = tail_edges(drop)
                 cons.add(head, c, 1)
-                if not eat:
-                    cons.add(body[-2], tail, -1)
+                for a, b in removed:
+                    cons.add(a, b, -1)
                 ok = cons.feasible()
                 cons.add(head, c, -1)
-                if not eat:
-                    cons.add(body[-2], tail, 1)
+                for a, b in removed:
+                    cons.add(a, b, 1)
                 if ok:
                     n = c
                     break
             if n is None:
                 # No proven shortcut: follow a cycle that contains the body, which always exists.
-                cyc = cycle_from_tree(cons.tree(), head, body[1])
-                cut = cyc.index(food)
-                follow = cyc[:cut + 1]
+                cyc = cycle_from_tree(cons.tree(), head, body[1], bricks)
+                follow = cyc[:cyc.index(fcell) + 1]
                 n = follow.pop(0)
-        eat = n == food
+        eat = n == fcell
         moves.append(DIRS.index((n[0] - head[0], n[1] - head[1])))
         cons.add(head, n, 1)
-        if not eat:
-            cons.add(body[-2], tail, -1)
+        drop = 0 if eat and food[2] == 0 else (2 if eat else 1)
+        for a, b in tail_edges(drop):
+            cons.add(a, b, -1)
+        # free the tail first: the head may enter the very cell the tail is leaving
+        for _ in range(drop):
             occ.discard(body.pop())
         body.insert(0, n)
         occ.add(n)
         if eat:
-            fr = free()
-            if not fr:
-                return moves, foods
-            food = rnd.choice(fr)
+            eaten += 1
+            if eaten >= APPLES:
+                return moves, foods, sorted(bricks)
+            food = new_food()
             foods.append(food)
             since, follow = 0, None
         else:
             since += 1
             if since > stall_limit and follow is None:
-                cyc = cycle_from_tree(cons.tree(), body[0], body[1])
-                follow = cyc[:cyc.index(food) + 1]
+                cyc = cycle_from_tree(cons.tree(), body[0], body[1], bricks)
+                follow = cyc[:cyc.index(food[:2]) + 1]
                 since = 0
         assert n not in set(body[1:]), "died"
 
@@ -218,5 +269,5 @@ def solve(seed, stall_limit=500):
 if __name__ == "__main__":
     import time
     t = time.time()
-    moves, foods = solve(int(sys.argv[1]))
-    print("seed", sys.argv[1], "WON moves", len(moves), "foods", len(foods), "sec", int(time.time() - t), flush=True)
+    moves, foods, bricks = solve(int(sys.argv[1]))
+    print("seed", sys.argv[1], "moves", len(moves), "apples", len(foods), "bricks", len(bricks), "sec", int(time.time() - t), flush=True)
