@@ -6,7 +6,7 @@ import solver
 
 WANT = (6200, 7800)    # moves; at 22 moves per second that is 4.7 to 6 minutes
 KEEP = 8
-LONG_GAP = 70          # moves between two apples; longer means a long walk without eating
+LONG_GAP = 100         # moves between two apples; longer means a long walk without eating
 
 
 def one(seed):

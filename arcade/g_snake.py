@@ -28,7 +28,7 @@ DIR_LIST = list(DIRS)
 # and the brick blocks of the board. An event is (move, cell, kind, expires): kind 0 red apple (grows the snake),
 # 1 blue apple (shortens it by one), 2 golden apple (bonus); kind -1 removes the apple at that cell.
 SNAKE_GAMES = pickle.load(open(os.environ.get("GAME_SNAKE", os.path.join(HERE, "snake_games.bin")), "rb"))
-POINTS = (10, 20, 100)
+POINTS = (15, -10, 100)
 BANDS = 16
 NS = 104              # sprites per floor variant: empty floor, 96 body, 4 heads, 3 apples
 HEAD0, APPLE0 = 97, 101
@@ -147,7 +147,7 @@ def snake_game():
         occ.add(n)
         s["added"].append(n)
         if apple:
-            s["score"] += POINTS[apple[0]]
+            s["score"] = max(0, s["score"] + POINTS[apple[0]])
         advance_events()
         return True
 

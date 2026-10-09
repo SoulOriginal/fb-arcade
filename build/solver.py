@@ -183,10 +183,10 @@ def bfs_from(food, blocked):
 
 
 LIFE = (150, 150, 60)       # moves an apple stays on the board: red, blue, golden
-POINTS = (10, 20, 100)
-RED_STOP = 44               # no new red apples while the snake is at least this long
-BLUE_MIN = 8                # the snake never steps on a blue apple while shorter than this
-TARGET = int(os.environ.get("SNAKE_TARGET", "11000"))
+POINTS = (15, -10, 100)    # eating a blue apple costs points: shrinking is a price, not a gift
+RED_STOP = 40               # no new red apples while the snake is at least this long
+BLUE_MIN = 24               # the snake never steps on a blue apple while shorter than this
+TARGET = int(os.environ.get("SNAKE_TARGET", "5800"))
 
 
 def solve(seed):
@@ -238,7 +238,7 @@ def solve(seed):
                 state["blue_gone"] = k
         have = [a[0] for a in apples.values()]
         # A long snake is cramped: more blue apples show up and no new red ones until it has shrunk again.
-        want_blue = 0 if len(body) < BLUE_MIN else 1 + (len(body) - BLUE_MIN) // 22
+        want_blue = 0 if len(body) < BLUE_MIN else 1      # at most one apple of each kind on the board
         if have.count(0) == 0 and len(body) < RED_STOP:
             spawn(0, k)
         if have.count(1) < want_blue and k - state["blue_gone"] >= 5:
@@ -305,7 +305,7 @@ def solve(seed):
         since += 1
         state["maxlen"] = max(state.get("maxlen", 0), len(body))
         if eaten:
-            state["score"] += POINTS[eaten[0]]
+            state["score"] = max(0, state["score"] + POINTS[eaten[0]])
             gaps.append(since)
             since = 0
             if eaten[0] == 1:
