@@ -4,7 +4,7 @@ from fbcore import *
 core = load_bundle("games.bin")
 sp = {k: v for k, v in core.items() if k != "snake_strip"}
 raw = {"snake_strip": core["snake_strip"]}
-LBL_LENGTH, LBL_SCORE, LBL_LINES, LBL_LEVEL, LBL_NEXT, LBL_WIN, LBL_OVER, LBL_APPLES = range(8)
+LBL_LENGTH, LBL_SCORE, LBL_LINES, LBL_LEVEL, LBL_NEXT, LBL_WIN, LBL_OVER = range(7)
 GRAY = 0xD69A
 
 
@@ -24,14 +24,17 @@ DIRS = {(1, 0): 0, (-1, 0): 1, (0, 1): 2, (0, -1): 3}
 GW, GH = 24, 12
 START = [(2, 0), (1, 0), (0, 0)]
 DIR_LIST = list(DIRS)
-# Games solved offline by solver.py (dynamic Hamiltonian cycle over the free 2x2 blocks): direction codes, the apple
-# sequence (cell and kind: 0 grows the snake, 1 shortens it) and the brick blocks of the board.
+# Games solved offline by solver.py (dynamic Hamiltonian cycle over the free 2x2 blocks): direction codes, apple events
+# and the brick blocks of the board. An event is (move, cell, kind, expires): kind 0 red apple (grows the snake),
+# 1 blue apple (shortens it by one), 2 golden apple (bonus); kind -1 removes the apple at that cell.
 SNAKE_GAMES = pickle.load(open(os.environ.get("GAME_SNAKE", os.path.join(HERE, "snake_games.bin")), "rb"))
+POINTS = (10, 20, 100)
 BANDS = 16
-NS = 103              # sprites per floor variant: empty floor, 96 body, 4 heads, 2 apples
+NS = 104              # sprites per floor variant: empty floor, 96 body, 4 heads, 3 apples
 HEAD0, APPLE0 = 97, 101
 SWEEP = 24            # cells re-checked for a gradient change per tick: the cost does not depend on the length
 RATE = 22             # moves per second: about 0.7 cell per tick, so the crawl between cells stays smooth
+BLINK = 24            # an apple that is about to disappear blinks for its last moves
 
 
 def snake_game():
@@ -77,36 +80,47 @@ def snake_game():
             for j in range(CS):
                 write_row(OY + y * CS + j, lines[y & 1][j])
         for bx, by in bricks:
-            blit(sp["snake_brick"][0], bx * 2 * CS, OY + by * 2 * CS)
+            blit(sp["brick"][0], bx * 2 * CS, OY + by * 2 * CS)
+
+    def draw_apple(c, kind, visible):
+        blit(sn[(APPLE0 + kind if visible else 0) + variant(c)], *xy(c))
+
+    def advance_events():
+        # Apples spawn and vanish exactly as the solver scheduled them, before the move with that index.
+        ev = s["events"]
+        while s["ev_i"] < len(ev) and ev[s["ev_i"]][0] <= s["k"]:
+            _, c, kind, exp = ev[s["ev_i"]]
+            s["ev_i"] += 1
+            if kind >= 0:
+                s["apples"][c] = [kind, exp, True]
+                draw_apple(c, kind, True)
+            else:
+                s["apples"].pop(c, None)
+                if c not in s["occ"]:
+                    erase(c)
 
     def reset():
         clear()
         fill_rect(0, OY - 8, W, 4, 0x4208)
         blit(sp["label"][LBL_LENGTH], 40, 40)
-        blit(sp["label"][LBL_APPLES], 720, 40)
+        blit(sp["label"][LBL_SCORE], 760, 40)
         body = START[:]
-        moves, foods, bricks = random.choice(SNAKE_GAMES)
+        moves, events, bricks = random.choice(SNAKE_GAMES)
         s.update(body=body, occ=set(body), phase="play", t=0, acc=0.0, hue=0, shown={}, nxt=None, count=-1,
-                 moves=moves, foods=foods, k=0, fk=0, cursor=0, partial=False, added=[], removed=[], eaten=-1)
+                 moves=moves, events=events, k=0, ev_i=0, apples={}, cursor=0, partial=False, added=[], removed=[],
+                 score=0, shown_score=-1)
         draw_board(bricks)
-        place_food()
+        advance_events()
         for i, p in enumerate(body):
             show(p, key_at(i, len(body)))
 
     def hud():
-        if s["count"] != len(s["body"]) or s["eaten"] != s["shown_eaten"]:
+        if s["count"] != len(s["body"]):
             s["count"] = len(s["body"])
-            s["shown_eaten"] = s["eaten"]
             draw_num(str(s["count"]), 360, 20, 4)
-            draw_num("%d/%d" % (max(0, s["eaten"]), len(s["foods"])), 1060, 20, 8)
-
-    def place_food():
-        s["eaten"] += 1
-        s["food"] = s["foods"][s["fk"]] if s["fk"] < len(s["foods"]) else None
-        s["fk"] += 1
-        f = s["food"]
-        if f:
-            blit(sn[APPLE0 + f[2] + variant(f)], *xy(f))
+        if s["shown_score"] != s["score"]:
+            s["shown_score"] = s["score"]
+            draw_num(str(s["score"]), 1100, 20, 7)
 
     def next_cell():
         if s["nxt"] is None:
@@ -121,11 +135,10 @@ def snake_game():
         s["k"] += 1
         if n in occ and n != body[-1]:
             return False
-        food = s["food"]
-        eat = food is not None and n == food[:2]
-        # A growing apple keeps the tail, a shortening one drops two cells, a plain step drops one. The tail goes
+        apple = s["apples"].pop(n, None)
+        # A red or golden apple keeps the tail, a blue one drops two cells, a plain step drops one. The tail goes
         # first: the head may step into the very cell the tail is leaving.
-        drop = (2 if food[2] else 0) if eat else 1
+        drop = (2 if apple[0] == 1 else 0) if apple else 1
         for _ in range(drop):
             tail = body.pop()
             occ.discard(tail)
@@ -133,9 +146,18 @@ def snake_game():
         body.insert(0, n)
         occ.add(n)
         s["added"].append(n)
-        if eat:
-            place_food()
+        if apple:
+            s["score"] += POINTS[apple[0]]
+        advance_events()
         return True
+
+    def blink_apples():
+        for c, a in s["apples"].items():
+            left = a[1] - s["k"]
+            visible = left > BLINK or (left // 3) % 2 == 0
+            if visible != a[2]:
+                a[2] = visible
+                draw_apple(c, a[0], visible)
 
     def draw_changes(budget):
         # Only what changed is drawn: the cells entered this tick, the old head, the freed tail cells, and a
@@ -177,8 +199,8 @@ def snake_game():
             fill_rect(x if hx > 0 else x + CS - ln, y + 3, ln, CS - 6, col)
         else:
             fill_rect(x + 3, y if hy > 0 else y + CS - ln, CS - 6, ln, col)
-        food = s["food"]
-        if not (food is not None and n == food[:2] and not food[2]):
+        apple = s["apples"].get(n)
+        if not (apple and apple[0] != 1):
             t, q = body[-1], body[-2]
             qx, qy = q[0] - t[0], q[1] - t[1]
             if qx:
@@ -192,13 +214,14 @@ def snake_game():
             s["acc"] += RATE / 30
             while s["acc"] >= 1 and s["phase"] == "play":
                 s["acc"] -= 1
-                if s["food"] is None:
+                if s["k"] >= len(s["moves"]):
                     s["phase"], s["t"] = "win", 0
                 elif not move():
                     s["phase"], s["t"] = "dead", 0
                     center(LBL_OVER)
-            s["partial"] = s["phase"] == "play" and s["food"] is not None
+            s["partial"] = s["phase"] == "play" and s["k"] < len(s["moves"])
             draw_changes(SWEEP)
+            blink_apples()
             if s["partial"]:
                 crawl(s["acc"])
             hud()
@@ -216,7 +239,6 @@ def snake_game():
             reset()
         return False
 
-    s["shown_eaten"] = -2
     reset()
     return step
 

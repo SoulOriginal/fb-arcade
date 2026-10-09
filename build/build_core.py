@@ -40,20 +40,19 @@ out["label"] = [
     pack(label("NEXT", 44, (150, 160, 190))),
     pack(label("YOU WIN", 210, (255, 215, 0), 24)),
     pack(label("GAME OVER", 150, (240, 60, 60), 24)),
-    pack(label("APPLES", 44, (150, 160, 190))),
 ]
 
 # Snake board: 80x80 cells over a dark garden floor. Four floor variants (by cell parity, two of them with small
 # decorations) and every sprite is pre-composited on each variant, so erasing a cell just blits its empty tile.
 # Per variant: 0 empty floor; 1 + hue*16 + band body (band 0 next to the head, 15 at the tail; the palette is a
 # light-to-dark gradient, hue 0 is green, the other hues are for the win flash); 97..100 head right/left/down/up;
-# 101 growing apple; 102 shrinking apple. Coordinates are laid out for a 48 px cell and scaled by K.
+# 101 growing apple; 102 shrinking apple; 103 golden apple. Coordinates are laid out for a 48 px cell and scaled by K.
 import random as _random
 CELL = 80
 K = CELL / 48
 SS = 3
 VARIANTS = 4
-PER_VARIANT = 103
+PER_VARIANT = 104
 
 
 def floor_tile(v):
@@ -128,8 +127,13 @@ def head_shape(direction):
     return draw
 
 
+APPLE_COLORS = (((225, 40, 40), (255, 140, 140), (255, 210, 210)),
+                ((60, 90, 235), (150, 170, 255), (210, 220, 255)),
+                ((250, 190, 30), (255, 235, 130), (255, 250, 210)))
+
+
 def apple_shape(kind):
-    body, rim, hi = ((225, 40, 40), (255, 140, 140), (255, 210, 210)) if kind == 0 else ((60, 90, 235), (150, 170, 255), (210, 220, 255))
+    body, rim, hi = APPLE_COLORS[kind]
 
     def draw(d, k, sh):
         d.ellipse((7 * k, 10 * k, 41 * k, 44 * k), fill=(0, 0, 0, 120) if sh else body + (255,),
@@ -140,6 +144,11 @@ def apple_shape(kind):
         d.line((24 * k, 12 * k, 28 * k, 3 * k), fill=(120, 200, 60, 255), width=int(4 * k))
         if kind == 1:           # a white bar marks the apple that makes the snake shorter
             d.rectangle((16 * k, 26 * k, 32 * k, 30 * k), fill=(255, 255, 255, 255))
+        if kind == 2:           # the golden apple sparkles
+            for sx, sy, r in ((34, 14, 5), (12, 38, 4)):
+                d.polygon([(sx * k, (sy - r) * k), ((sx + 1) * k, (sy - 1) * k), ((sx + r) * k, sy * k), ((sx + 1) * k, (sy + 1) * k),
+                           (sx * k, (sy + r) * k), ((sx - 1) * k, (sy + 1) * k), ((sx - r) * k, sy * k), ((sx - 1) * k, (sy - 1) * k)],
+                          fill=(255, 255, 255, 255))
     return draw
 
 
@@ -153,6 +162,7 @@ for v in range(VARIANTS):
         snake.append(cell(head_shape(direction), v))
     snake.append(cell(apple_shape(0), v))
     snake.append(cell(apple_shape(1), v))
+    snake.append(cell(apple_shape(2), v))
 assert len(snake) == VARIANTS * PER_VARIANT
 out["snake"] = snake
 # Strip colors for the crawling animation: the head color of each hue, as RGB565.
@@ -182,7 +192,7 @@ def brick_block():
     return img
 
 
-out["snake_brick"] = [pack(brick_block())]
+out["brick"] = [pack(brick_block())]
 
 # Tetris cells 48x48: 0 empty, 1..7 pieces, 8 white (line flash).
 cells = []

@@ -182,6 +182,13 @@ def bfs_from(food, blocked):
     return d
 
 
+LIFE = (150, 150, 60)       # moves an apple stays on the board: red, blue, golden
+POINTS = (10, 20, 100)
+RED_STOP = 44               # no new red apples while the snake is at least this long
+BLUE_MIN = 8                # the snake never steps on a blue apple while shorter than this
+TARGET = int(os.environ.get("SNAKE_TARGET", "11000"))
+
+
 def solve(seed):
     rnd = random.Random(seed)
     bricks = pick_bricks(rnd)
@@ -193,43 +200,81 @@ def solve(seed):
         cons.add(a, b, 1)
     assert cons.feasible()
     plan = {}
+    apples = {}                 # cell -> [kind, expires at move k]
+    events = []                 # (k, cell, kind, expires) spawns; (k, cell, -1, 0) removals
+    state = {"score": 0, "blue_gone": -99, "target": None}
 
     def free_cells():
-        return [(x, y) for y in range(GH) for x in range(GW) if (x, y) not in occ and (x, y) not in brick_cells]
+        return [(x, y) for y in range(GH) for x in range(GW)
+                if (x, y) not in occ and (x, y) not in brick_cells and (x, y) not in apples]
 
-    def new_food():
-        # The apple appears on the stretch of a valid cycle just ahead of the head (never in the first few cells), and
-        # that cycle becomes the plan. From here on every move has to bring the apple strictly closer along a valid
-        # cycle, so the snake can never wander or loop round the board without a goal.
-        kind = 1 if len(body) >= MIN_SHRINK_LEN and rnd.random() < SHRINK_SHARE else 0
+    def spawn(kind, k):
+        # An apple appears on the stretch of a valid cycle just ahead of the head (never in the first few cells), so
+        # that it is always within reach of a plan that cannot loop round the board.
         edges = cons.tree(rnd)
         cyc = cycle_from_tree(edges, body[0], body[1], bricks)
-        ahead = [c for c in cyc[4:AHEAD] if c not in occ]
+        ahead = [c for c in cyc[4:AHEAD] if c not in occ and c not in apples]
         c = rnd.choice(ahead or free_cells())
+        apples[c] = [kind, k + LIFE[kind]]
+        events.append((k, c, kind, k + LIFE[kind]))
         plan["tree"] = edges
-        return (c[0], c[1], kind)
 
     def tail_edges(drop):
-        # the edges that disappear when `drop` tail cells are removed
         return [(body[-1 - k - 1], body[-1 - k]) for k in range(drop)]
 
-    def drop_for(eat, food):
-        return (2 if food[2] else 0) if eat else 1
+    def drop_for(cell):
+        # grow: keep the tail; blue apple: drop two cells (net -1); a plain step drops one
+        if cell in apples:
+            return 2 if apples[cell][0] == 1 else 0
+        return 1
 
-    food = new_food()
-    foods, moves, eaten = [food], [], 0
+    gaps, since = [], 0
     while True:
+        k = len(moves := plan.setdefault("moves", []))
+        for c in [c for c, a in apples.items() if a[1] <= k]:
+            kind = apples.pop(c)[0]
+            events.append((k, c, -1, 0))
+            if kind == 1:
+                state["blue_gone"] = k
+        have = [a[0] for a in apples.values()]
+        # A long snake is cramped: more blue apples show up and no new red ones until it has shrunk again.
+        want_blue = 0 if len(body) < BLUE_MIN else 1 + (len(body) - BLUE_MIN) // 22
+        if have.count(0) == 0 and len(body) < RED_STOP:
+            spawn(0, k)
+        if have.count(1) < want_blue and k - state["blue_gone"] >= 5:
+            spawn(1, k)
+        if 2 not in have and k > 120 and rnd.random() < 0.012:
+            spawn(2, k)
+        if not apples:
+            spawn(0 if len(body) < RED_STOP else 1, k)
         head = body[0]
-        fcell = food[:2]
         cyc = cycle_from_tree(plan["tree"], head, body[1], bricks)
-        best = (cyc.index(fcell), 1, 0)       # (moves left after the step, turns, direction): the plan's own step
-        n, new_tree = cyc[0], None
-        for k, (dx, dy) in enumerate(DIRS):
+        reach = {c: cyc.index(c) + 1 for c in apples}
+
+        def value(c):
+            kind, exp = apples[c]
+            if reach[c] > exp - k:
+                return None                       # it would be gone before we get there
+            length = len(body)
+            # a long snake is cramped: it stops wanting red apples and goes for the blue ones; a short one avoids blue
+            bonus = (-max(0, length - 28), 18 + max(0, length - 20) if length >= 10 else -60, 40)[kind]
+            return reach[c] - bonus
+
+        target = state["target"]
+        options = sorted((value(c), c) for c in apples if value(c) is not None)
+        if target not in apples or value(target) is None:
+            target = options[0][1] if options else min(apples, key=lambda c: reach[c])
+        elif options and apples[options[0][1]][0] == 2 and options[0][1] != target and options[0][0] < value(target) - 10:
+            target = options[0][1]                # a golden apple is worth a detour
+        state["target"] = target
+        n, new_tree, best = cyc[0], None, (reach[target] - 1, 1)
+        for kk, (dx, dy) in enumerate(DIRS):
             c = (head[0] + dx, head[1] + dy)
             if not (0 <= c[0] < GW and 0 <= c[1] < GH) or c in brick_cells or (c in occ and c != body[-1]):
                 continue
-            eat = c == fcell
-            removed = tail_edges(drop_for(eat, food))
+            if c in apples and apples[c][0] == 1 and len(body) < BLUE_MIN:
+                continue
+            removed = tail_edges(drop_for(c))
             cons.add(head, c, 1)
             for a, b in removed:
                 cons.add(a, b, -1)
@@ -239,15 +284,15 @@ def solve(seed):
                 cons.add(a, b, 1)
             if tree is None:
                 continue
-            left = 0 if eat else cycle_from_tree(tree, c, head, bricks).index(fcell) + 1
+            left = 0 if c == target else cycle_from_tree(tree, c, head, bricks).index(target) + 1
             straight = 0 if len(body) > 1 and (head[0] - body[1][0], head[1] - body[1][1]) == (dx, dy) else 1
-            if (left, straight) < best[:2]:
-                best, n, new_tree = (left, straight, k), c, tree
+            if (left, straight) < best:
+                best, n, new_tree = (left, straight), c, tree
         if new_tree is not None:
             plan["tree"] = new_tree
-        eat = n == fcell
         moves.append(DIRS.index((n[0] - head[0], n[1] - head[1])))
-        drop = drop_for(eat, food)
+        drop = drop_for(n)
+        eaten = apples.pop(n) if n in apples else None
         cons.add(head, n, 1)
         for a, b in tail_edges(drop):
             cons.add(a, b, -1)
@@ -257,16 +302,22 @@ def solve(seed):
         body.insert(0, n)
         occ.add(n)
         assert n not in set(body[1:]), "died"
-        if eat:
-            eaten += 1
-            if eaten >= APPLES:
-                return moves, foods, sorted(bricks)
-            food = new_food()
-            foods.append(food)
+        since += 1
+        state["maxlen"] = max(state.get("maxlen", 0), len(body))
+        if eaten:
+            state["score"] += POINTS[eaten[0]]
+            gaps.append(since)
+            since = 0
+            if eaten[0] == 1:
+                state["blue_gone"] = k + 1
+            if state["score"] >= TARGET:
+                if os.environ.get("SNAKE_STATS"):
+                    print("   max length", state["maxlen"])
+                return moves, events, sorted(bricks), gaps
 
 
 if __name__ == "__main__":
     import time
     t = time.time()
-    moves, foods, bricks = solve(int(sys.argv[1]))
-    print("seed", sys.argv[1], "moves", len(moves), "apples", len(foods), "bricks", len(bricks), "sec", int(time.time() - t), flush=True)
+    moves, events, bricks, gaps = solve(int(sys.argv[1]))
+    print("seed", sys.argv[1], "moves", len(moves), "apples", len(gaps), "longest gap", max(gaps), "sec", int(time.time() - t), flush=True)
