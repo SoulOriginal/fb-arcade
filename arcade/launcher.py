@@ -1,6 +1,6 @@
 # Launcher: plays the games in turn, each until it reports it is over, with a transition between them.
 # Headless check: GAME_FB=<4147200-byte file> GAME_DIR=<dir with bundles> GAME_FPS=100000 GAME_ONLY=<name>
-import importlib, os, signal, sys
+import gc, importlib, os, signal, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fbcore import *
 
@@ -73,7 +73,7 @@ def on_skip(signum, frame):
 
 
 signal.signal(signal.SIGUSR1, on_skip)
-ALL = ["snake", "tetris", "bomber", "sonic", "fzero", "moto", "pacman", "invaders", "frogger", "battletoads", "turbo", "tanks", "isaac", "persia"]
+ALL = ["snake", "tetris", "bomber", "sonic", "fzero", "moto", "pacman", "invaders", "frogger", "battletoads", "turbo", "tanks", "isaac", "persia", "deadspace"]
 # A game whose files are not deployed yet is skipped instead of crashing the whole carousel.
 NAMES = [n for n in ALL if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "g_%s.py" % n))]
 mods = {}
@@ -101,6 +101,11 @@ while True:
                 break
             time.sleep(max(0, 1 / FPS - (time.monotonic() - t0)))
         print(name, "finished", flush=True)
+        # Drop the finished game: sprite bundles are large and several of them together do not fit in a small board's RAM.
+        step = None
+        mods.pop(name, None)
+        sys.modules.pop("g_" + name, None)
+        gc.collect()
         last_game = name
         if skip_flag:
             skip_flag.clear()
