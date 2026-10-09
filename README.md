@@ -4,7 +4,7 @@ Retro-style arcade games that play themselves, drawn straight to the Linux frame
 No window system, no GPU, no dependencies on the device: just Python 3 and `/dev/fb0`.
 Plug a small board into a TV and it becomes an arcade screensaver.
 
-Fifteen games rotate with a transition between them. A bot plays each one until it reaches a score
+Sixteen games rotate with a transition between them. A bot plays each one until it reaches a score
 target (or about nine minutes at most), shows the result and moves on.
 
 | Game | Inspired by |
@@ -24,6 +24,7 @@ target (or about nine minutes at most), shows the result and moves on.
 | `isaac` | The Binding of Isaac, room-by-room roguelike shooter |
 | `persia` | Prince of Persia, dungeon platformer with sword fights |
 | `deadspace` | Dead Space, side-view survival horror with limb-by-limb dismemberment |
+| `flappy` | Flappy Bird, with the original physics, medals and score card |
 
 ## Screenshots
 
@@ -39,6 +40,8 @@ target (or about nine minutes at most), shows the result and moves on.
 | `battletoads` | `turbo` | `tanks` |
 | <img src="docs/screenshots/isaac.png" width="300" alt="isaac"> | <img src="docs/screenshots/persia.png" width="300" alt="persia"> | <img src="docs/screenshots/deadspace.png" width="300" alt="deadspace"> |
 | `isaac` | `persia` | `deadspace` |
+| <img src="docs/screenshots/flappy.png" width="300" alt="flappy"> |  |  |
+| `flappy` |  |  |
 
 ## Requirements
 
