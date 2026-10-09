@@ -26,15 +26,41 @@ SHRINK_SHARE = 0.4
 MIN_SHRINK_LEN = 6
 
 
+def _shape(rnd, style):
+    # Returns a set of 2x2 blocks forming one obstacle of the given style.
+    bx, by = rnd.randrange(BW), rnd.randrange(BH)
+    if style == "bar":
+        n = rnd.randint(3, 5)
+        return {(bx + i, by) for i in range(n)}
+    if style == "post":
+        n = rnd.randint(2, 4)
+        return {(bx, by + i) for i in range(n)}
+    if style == "ell":
+        n, m = rnd.randint(2, 3), rnd.randint(2, 3)
+        dx, dy = rnd.choice((1, -1)), rnd.choice((1, -1))
+        return {(bx + dx * i, by) for i in range(n)} | {(bx, by + dy * j) for j in range(m)}
+    if style == "plus":
+        return {(bx, by), (bx + 1, by), (bx - 1, by), (bx, by + 1), (bx, by - 1)}
+    if style == "block":
+        return {(bx, by), (bx + 1, by), (bx, by + 1), (bx + 1, by + 1)}
+    return {(bx, by)}       # "dot"
+
+
+STYLES = ("dot", "bar", "post", "ell", "plus", "block")
+MAX_BRICKS = 13
+
+
 def pick_bricks(rnd):
-    # Bricks are whole 2x2 blocks so that a Hamiltonian cycle through the remaining blocks still exists; the blocks
-    # under the start position stay free and the rest must stay connected.
-    for _ in range(1000):
-        n = rnd.randint(5, 9)
-        cand = [(bx, by) for bx in range(BW) for by in range(BH) if (bx, by) not in ((0, 0), (1, 0), (0, 1))]
-        bricks = set(rnd.sample(cand, n))
-        # no two bricks touching: they would merge into walls that cut the board into corridors
-        if any(((bx + dx, by + dy) in bricks) for bx, by in bricks for dx, dy in DIRS):
+    # Every game gets a new arrangement: a few obstacles of random kinds (single bricks, bars, posts, L-corners,
+    # plus signs, blocks), mirrored by the player later. The blocks under the start stay free and the remaining
+    # blocks must stay connected, which is all a Hamiltonian cycle through them needs.
+    free_start = {(0, 0), (1, 0), (0, 1)}
+    for _ in range(5000):
+        bricks = set()
+        for _ in range(rnd.randint(2, 4)):
+            bricks |= _shape(rnd, rnd.choice(STYLES))
+        bricks = {c for c in bricks if 0 <= c[0] < BW and 0 <= c[1] < BH}
+        if not 5 <= len(bricks) <= MAX_BRICKS or bricks & free_start:
             continue
         seen, queue = {(0, 0)}, [(0, 0)]
         for bx, by in queue:

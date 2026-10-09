@@ -37,6 +37,18 @@ RATE = 22             # moves per second: about 0.7 cell per tick, so the crawl 
 BLINK = 24            # an apple that is about to disappear blinks for its last moves
 
 
+def mirrored(game, fx, fy):
+    # Every stored game can be flipped horizontally and/or vertically, which turns each board into four different
+    # ones. Direction codes: 0 right, 1 left, 2 down, 3 up; blocks are 2x2 cells on a 12x6 grid.
+    moves, events, bricks = game
+    swap = {0: 1 if fx else 0, 1: 0 if fx else 1, 2: 3 if fy else 2, 3: 2 if fy else 3}
+    cell = lambda c: ((GW - 1 - c[0]) if fx else c[0], (GH - 1 - c[1]) if fy else c[1])
+    return (bytes(swap[m] for m in moves),
+            [(k, cell(c), kind, exp) for k, c, kind, exp in events],
+            [((GW // 2 - 1 - bx) if fx else bx, (GH // 2 - 1 - by) if fy else by) for bx, by in bricks],
+            [cell(c) for c in START])
+
+
 def snake_game():
     sn = sp["snake"]
     strip = raw["snake_strip"]
@@ -104,8 +116,7 @@ def snake_game():
         fill_rect(0, OY - 8, W, 4, 0x4208)
         blit(sp["label"][LBL_LENGTH], 40, 40)
         blit(sp["label"][LBL_SCORE], 760, 40)
-        body = START[:]
-        moves, events, bricks = random.choice(SNAKE_GAMES)
+        moves, events, bricks, body = mirrored(random.choice(SNAKE_GAMES), random.random() < 0.5, random.random() < 0.5)
         s.update(body=body, occ=set(body), phase="play", t=0, acc=0.0, hue=0, shown={}, nxt=None, count=-1,
                  moves=moves, events=events, k=0, ev_i=0, apples={}, cursor=0, partial=False, added=[], removed=[],
                  score=0, shown_score=-1)
