@@ -19,9 +19,9 @@ def center(label_index):
     blit(s, (W - s[0]) // 2, (H - s[1]) // 2)
 
 
-CS, OY = 48, 120
+CS, OY = 80, 120
 DIRS = {(1, 0): 0, (-1, 0): 1, (0, 1): 2, (0, -1): 3}
-GW, GH = 40, 20
+GW, GH = 24, 12
 N = GW * GH
 START = [(2, 0), (1, 0), (0, 0)]
 DIR_LIST = list(DIRS)
@@ -29,6 +29,7 @@ DIR_LIST = list(DIRS)
 SNAKE_GAMES = pickle.load(open(os.environ.get("GAME_SNAKE", os.path.join(HERE, "snake_games.bin")), "rb"))
 BANDS = 16
 HEAD0, APPLE = 97, 101
+SWEEP = 24            # cells re-checked for a gradient change per tick: the cost does not depend on the length
 
 
 def snake_game():
@@ -39,6 +40,18 @@ def snake_game():
     def xy(p):
         return p[0] * CS, OY + p[1] * CS
 
+    def key_at(i, n):
+        # Sprite for body index i of n: the head faces away from its neck, the rest is a gradient by index.
+        body = s["body"]
+        if i == 0:
+            return HEAD0 + DIRS[(body[0][0] - body[1][0], body[0][1] - body[1][1])]
+        return 1 + s["hue"] * BANDS + i * BANDS // n
+
+    def show(p, key):
+        if s["shown"].get(p) != key:
+            blit(sn[key], *xy(p))
+            s["shown"][p] = key
+
     def reset():
         clear()
         fill_rect(0, OY - 8, W, 4, 0x4208)
@@ -46,8 +59,10 @@ def snake_game():
         body = START[:]
         moves, foods = random.choice(SNAKE_GAMES)
         s.update(body=body, occ=set(body), phase="play", t=0, acc=0.0, hue=0, shown={}, nxt=None, count=-1,
-                 moves=moves, foods=foods, k=0, fk=0)
+                 moves=moves, foods=foods, k=0, fk=0, cursor=0, partial=False, added=[], removed=[])
         place_food()
+        for i, p in enumerate(body):
+            show(p, key_at(i, len(body)))
 
     def hud():
         if s["count"] != len(s["body"]):
@@ -76,30 +91,40 @@ def snake_game():
         if n == s["food"]:
             place_food()
         else:
-            occ.discard(body.pop())
+            tail = body.pop()
+            occ.discard(tail)
+            s["removed"].append(tail)
         body.insert(0, n)
         occ.add(n)
+        s["added"].append(n)
         return True
 
-    def draw_body():
-        # Gradient from the head to the tail: only cells whose band changed are redrawn.
-        body, shown = s["body"], s["shown"]
-        skip = body[-1] if s["partial"] else None
-        want = {}
+    def draw_changes(budget):
+        # Only what changed is drawn: the cells entered this tick, the old head, the freed tail cells, and a
+        # fixed-size slice of the body whose gradient band may have shifted. The sweep makes the gradient lag a
+        # little behind a fast snake instead of costing a frame, which a slow board cannot afford.
+        body, shown, live = s["body"], s["shown"], s["occ"]
         n = len(body)
-        for i, p in enumerate(body):
-            if i == 0:
-                d = (p[0] - body[1][0], p[1] - body[1][1])
-                want[p] = HEAD0 + DIRS[d]
-            else:
-                want[p] = 1 + s["hue"] * BANDS + i * BANDS // n
-        for p in [p for p in shown if p not in want]:
-            fill_rect(*xy(p), CS, CS, 0)
-            del shown[p]
-        for p, k in want.items():
-            if shown.get(p) != k and p != skip:
-                blit(sn[k], *xy(p))
-                shown[p] = k
+        for p in s["removed"]:
+            if p not in live and p in shown:
+                fill_rect(*xy(p), CS, CS, 0)
+                del shown[p]
+        m = len(s["added"])
+        for j, p in enumerate(s["added"]):
+            i = m - 1 - j
+            if i < n and body[i] == p:
+                show(p, key_at(i, n))
+        if 0 < m < n:
+            show(body[m], key_at(m, n))
+        skip = body[-1] if s["partial"] else None
+        for _ in range(min(budget, n)):
+            i = s["cursor"] % n
+            s["cursor"] += 1
+            p = body[i]
+            if p != skip:
+                show(p, key_at(i, n))
+        s["added"] = []
+        s["removed"] = []
 
     def crawl(frac):
         # Sub-cell motion: the head grows into the next cell while the tail cell is eaten away.
@@ -112,9 +137,9 @@ def snake_game():
         hx, hy = n[0] - body[0][0], n[1] - body[0][1]
         col = strip[s["hue"]]
         if hx:
-            fill_rect(x if hx > 0 else x + CS - ln, y + 2, ln, CS - 4, col)
+            fill_rect(x if hx > 0 else x + CS - ln, y + 3, ln, CS - 6, col)
         else:
-            fill_rect(x + 2, y if hy > 0 else y + CS - ln, CS - 4, ln, col)
+            fill_rect(x + 3, y if hy > 0 else y + CS - ln, CS - 6, ln, col)
         if n != s["food"]:
             t, q = body[-1], body[-2]
             tx, ty = xy(t)
@@ -127,10 +152,9 @@ def snake_game():
     def step():
         s["t"] += 1
         if s["phase"] == "play":
-            # Slow and smooth while short, fast once the long walks along the route start.
-            rate = 20 + 1500 * (len(s["body"]) / N) ** 2
+            # 0.6 cells per tick while short (smooth sub-cell crawl) up to 1.3 when the board is nearly full.
+            rate = 18 + 22 * (len(s["body"]) / N) ** 2
             s["acc"] += rate / 30
-            s["partial"] = False
             while s["acc"] >= 1 and s["phase"] == "play":
                 s["acc"] -= 1
                 if s["food"] is None:
@@ -138,21 +162,17 @@ def snake_game():
                 elif not move():
                     s["phase"], s["t"] = "dead", 0
                     center(LBL_OVER)
-            if s["phase"] == "play":
-                s["partial"] = rate < 45
-                draw_body()
-                if s["partial"]:
-                    crawl(s["acc"])
-                hud()
-            elif s["phase"] == "win":
-                s["partial"] = False
-                draw_body()
-                hud()
+            s["partial"] = s["phase"] == "play" and rate < 30
+            draw_changes(SWEEP)
+            if s["partial"]:
+                crawl(s["acc"])
+            hud()
         elif s["phase"] == "win":
             s["partial"] = False
-            if s["t"] % 3 == 0 and s["t"] < 150:
+            if s["t"] % 9 == 0 and s["t"] < 150:
                 s["hue"] = (s["hue"] + 1) % 6
-                draw_body()
+            if s["t"] < 150:
+                draw_changes(96)
             if s["t"] == 150:
                 center(LBL_WIN)
             if s["t"] > 400:
@@ -163,7 +183,6 @@ def snake_game():
 
     reset()
     return step
-
 
 
 make = snake_game

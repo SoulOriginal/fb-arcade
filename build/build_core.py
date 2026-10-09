@@ -42,10 +42,18 @@ out["label"] = [
     pack(label("GAME OVER", 150, (240, 60, 60), 24)),
 ]
 
-# Snake cells 48x48. 0 empty; 1 + hue*16 + band body (band 0 next to the head, 15 at the tail; the
-# palette is a light-to-dark gradient, hue 0 is green, the other hues are for the win flash);
-# 97..100 head right/left/down/up; 101 apple.
-snake = [pack(Image.new("RGB", (48, 48)))]
+# Snake cells 80x80 (the board is 24x12). 0 empty; 1 + hue*16 + band body (band 0 next to the head, 15 at the
+# tail; the palette is a light-to-dark gradient, hue 0 is green, the other hues are for the win flash);
+# 97..100 head right/left/down/up; 101 apple. Coordinates are laid out for a 48 px cell and scaled by K.
+CELL = 80
+K = CELL / 48
+SS = 3
+
+
+def cell(draw):
+    big = Image.new("RGB", (CELL * SS, CELL * SS))
+    draw(ImageDraw.Draw(big), K * SS)
+    return pack(big.resize((CELL, CELL), Image.LANCZOS))
 
 
 def body_color(hue, band):
@@ -54,25 +62,32 @@ def body_color(hue, band):
     return tuple(int(255 * v) for v in colorsys.hsv_to_rgb(base, 0.45 + 0.5 * f, 1.0 - 0.68 * f))
 
 
+snake = [pack(Image.new("RGB", (CELL, CELL)))]
 for hue in range(6):
     for band in range(16):
-        im = Image.new("RGB", (48, 48))
-        ImageDraw.Draw(im).rounded_rectangle((2, 2, 45, 45), radius=11, fill=body_color(hue, band))
-        snake.append(pack(im))
+        snake.append(cell(lambda d, k, c=body_color(hue, band): d.rounded_rectangle((2 * k, 2 * k, 45 * k, 45 * k), radius=11 * k, fill=c)))
 EYES = {0: ((34, 12), (34, 35)), 1: ((13, 12), (13, 35)), 2: ((12, 34), (35, 34)), 3: ((12, 13), (35, 13))}
-for d in range(4):
-    im = Image.new("RGB", (48, 48))
-    dr = ImageDraw.Draw(im)
-    dr.rounded_rectangle((1, 1, 46, 46), radius=13, fill=body_color(0, 0))
-    for ex, ey in EYES[d]:
-        dr.ellipse((ex - 5, ey - 5, ex + 5, ey + 5), fill=(255, 255, 255))
-        dr.ellipse((ex - 2, ey - 2, ex + 2, ey + 2), fill=(10, 10, 10))
-    snake.append(pack(im))
-im = Image.new("RGB", (48, 48))
-dr = ImageDraw.Draw(im)
-dr.ellipse((7, 10, 41, 44), fill=(225, 40, 40), outline=(255, 140, 140))
-dr.line((24, 12, 28, 3), fill=(120, 200, 60), width=4)
-snake.append(pack(im))
+
+
+def head(direction):
+    def draw(d, k):
+        d.rounded_rectangle((1 * k, 1 * k, 46 * k, 46 * k), radius=13 * k, fill=body_color(0, 0))
+        for ex, ey in EYES[direction]:
+            d.ellipse(((ex - 5) * k, (ey - 5) * k, (ex + 5) * k, (ey + 5) * k), fill=(255, 255, 255))
+            d.ellipse(((ex - 2) * k, (ey - 2) * k, (ex + 2) * k, (ey + 2) * k), fill=(10, 10, 10))
+    return cell(draw)
+
+
+for direction in range(4):
+    snake.append(head(direction))
+
+
+def apple(d, k):
+    d.ellipse((7 * k, 10 * k, 41 * k, 44 * k), fill=(225, 40, 40), outline=(255, 140, 140), width=max(1, int(k)))
+    d.line((24 * k, 12 * k, 28 * k, 3 * k), fill=(120, 200, 60), width=int(4 * k))
+
+
+snake.append(cell(apple))
 out["snake"] = snake
 # Strip colors for the crawling animation: the head color of each hue, as RGB565.
 out["snake_strip"] = [(lambda c: (c[0] >> 3) << 11 | (c[1] >> 2) << 5 | (c[2] >> 3))(body_color(h, 0)) for h in range(6)]

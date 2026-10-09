@@ -1,10 +1,10 @@
 # Offline snake solver: dynamic Hamiltonian cycle on a spanning tree of 2x2 blocks.
 # Invariant: after every move some spanning tree exists whose cycle contains the whole body as one
 # contiguous piece, so the snake can always follow that cycle and can never be trapped.
-import random, sys
+import os, random, sys
 from collections import deque
 
-GW, GH = 40, 20
+GW, GH = int(os.environ.get("SNAKE_W", "24")), int(os.environ.get("SNAKE_H", "12"))
 BW, BH = GW // 2, GH // 2
 N = GW * GH
 BASE = BW * BH
