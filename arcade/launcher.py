@@ -73,7 +73,7 @@ def on_skip(signum, frame):
 
 
 signal.signal(signal.SIGUSR1, on_skip)
-ALL = ["snake", "tetris", "bomber", "sonic", "fzero", "moto", "pacman", "invaders", "frogger", "battletoads", "turbo", "tanks", "isaac", "persia", "deadspace", "flappy", "doodle", "redball"]
+ALL = ["snake", "tetris", "bomber", "sonic", "fzero", "moto", "pacman", "invaders", "frogger", "battletoads", "turbo", "tanks", "isaac", "persia", "deadspace", "flappy", "doodle", "redball", "temple"]
 # A game whose files are not deployed yet is skipped instead of crashing the whole carousel.
 NAMES = [n for n in ALL if os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "g_%s.py" % n))]
 mods = {}
