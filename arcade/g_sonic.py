@@ -1,19 +1,25 @@
 # A self-playing Sonic-style platformer: procedurally generated acts over three zones, physics from the Sonic
 # Physics Guide (60 Hz, so two physics steps per 30 Hz tick), and a bot that plays like a skilled player.
 #
-# Rendering: the screen is 320x180 "virtual pixels" (vpx), each a 6x6 block. Every vpx row is a byte string of
-# 12 bytes per vpx, written once to the 6 scanlines it covers. Parallax comes from taking a different slice of
-# a pre-rendered periodic strip per row; terrain is spliced in as precomputed runs; sprites are opaque runs.
+# Rendering: the picture is a native Mega Drive frame of 320x216 pixels shown at x5 (1600x1080) with black side bars.
+# Every picture row is a full 3840-byte scanline buffer (10 bytes per pixel, starting LEFT bytes in) that is written
+# once to the 5 scanlines it covers. Parallax comes from taking a different slice of a pre-rendered periodic strip
+# per row; terrain is spliced in as precomputed runs; sprites are opaque runs.
 from fbcore import *
 import math
 from bisect import bisect_left, bisect_right
 
 D = load_bundle("g_sonic.bin")
 
-VW, VH, SB = 320, 180, 12
-S6 = S * 6
+VW, VH, PX = 320, 216, 5
+SB = PX * 2
+LEFT = (W - VW * PX) // 2 * 2
+S5 = S * PX
+BLACKROW = bytes(S)
 INF = 9999
 YMIN, YMAX, WH, LAVA_Y = 208, 288, 380, 320
+TILE_ROWS = 64
+FEET_Y = 172
 
 ZONES = (("ghz", "GREEN HILL", (30, 90, 220)), ("mz", "MARBLE", (130, 40, 160)), ("syz", "SPRING YARD", (40, 70, 170)))
 ACT_TILES = (360, 400, 440, 390, 430, 470, 420, 460, 500)
@@ -30,10 +36,10 @@ WAVE = [int(round(1.6 * math.sin(i * math.pi / 16))) for i in range(64)]
 
 
 def ck(r, g, b):
-    return rgb565(r, g, b).to_bytes(2, "little") * 6
+    return rgb565(r, g, b).to_bytes(2, "little") * PX
 
 
-def draw(rows, spr, x, y, width=VW):
+def draw(rows, spr, x, y, width=VW, left=LEFT):
     # Opaque runs are patched straight into the row buffers; clipping is only computed when the sprite pokes out.
     w, h, sr = spr
     if x >= width or x + w <= 0 or y >= len(rows) or y + h <= 0:
@@ -43,7 +49,7 @@ def draw(rows, spr, x, y, width=VW):
         for r in range(r0, r1):
             row = rows[y + r]
             for off, data in sr[r]:
-                a = (x + off) * SB
+                a = left + (x + off) * SB
                 row[a:a + len(data)] = data
         return
     for r in range(r0, r1):
@@ -53,30 +59,30 @@ def draw(rows, spr, x, y, width=VW):
             n = len(data) // SB
             lo, hi = max(a, 0), min(a + n, width)
             if lo < hi:
-                row[lo * SB:hi * SB] = data[(lo - a) * SB:(hi - a) * SB]
+                row[left + lo * SB:left + hi * SB] = data[(lo - a) * SB:(hi - a) * SB]
 
 
-def fill_span(rows, x, y, w, h, col12):
+def fill_span(rows, x, y, w, h, col):
     for r in range(max(0, y), min(len(rows), y + h)):
         lo, hi = max(0, x), min(VW, x + w)
         if lo < hi:
-            rows[r][lo * SB:hi * SB] = col12 * (hi - lo)
+            rows[r][LEFT + lo * SB:LEFT + hi * SB] = col * (hi - lo)
 
 
 FONT = D["font"]
 
 
 def text_width(s, size):
-    return len(s) * FONT[size]["cw"]
+    return sum(FONT[size]["adv"].get(ch, 0) for ch in s)
 
 
-def put_text(rows, s, x, y, size="S", color="white", width=VW):
+def put_text(rows, s, x, y, size="S", color="white", width=VW, left=LEFT):
     f = FONT[size]
     g = f["g"][color]
-    for i, ch in enumerate(s):
-        spr = g.get(ch)
-        if spr and ch != " ":
-            draw(rows, spr, x + i * f["cw"], y, width)
+    for ch in s:
+        if ch != " " and ch in g:
+            draw(rows, g[ch], x, y, width, left)
+        x += f["adv"].get(ch, 0)
 
 
 class O:
@@ -103,8 +109,8 @@ class Level:
     # ---- layout ----------------------------------------------------------------------------------
     def build_layout(self):
         rng, lvl = self.rng, self.zi * 3 + self.act
-        H, dl, sp = [252], [], self.spawns
-        self.H, self.dl = H, dl
+        H, E, dl, sp = [252], [], [], self.spawns
+        self.H, self.E, self.dl = H, E, dl
 
         def surf(x):
             i, k = int(x) // 16, int(x) % 16
@@ -112,7 +118,12 @@ class Level:
 
         def add(d):
             dl.append(d)
-            H.append(H[-1] + (d or 0))
+            E.append(H[-1] + (d or 0))
+            H.append(E[-1])
+
+        def step(dy):
+            # A vertical wall between two tiles: the next tile simply starts higher or lower than this one ended.
+            H[-1] += dy
 
         def flat(n):
             for _ in range(n):
@@ -138,7 +149,8 @@ class Level:
                     x = t * 16 + 8
                     r = rng.random()
                     if zone == "ghz":
-                        kind = "palm" if r < 0.34 else "flower" if r < 0.62 else "totem" if r < 0.72 else "bush"
+                        kind = (rng.choice(("palm1", "palm2", "palm3")) if r < 0.4 else "flower" if r < 0.62
+                                else "sunflower" if r < 0.8 else "totem")
                     elif zone == "mz":
                         kind = "column" if r < 0.5 else "brazier"
                     else:
@@ -149,7 +161,7 @@ class Level:
         counts = {"spring": 0}
         flat(14)
         while len(dl) < self.ntiles - 26:
-            weights = {"flat": 26, "hill": 22 + (6 if self.zone == "mz" else 0), "pit": 12 + lvl,
+            weights = {"flat": 26, "hill": 22 + (6 if self.zone == "mz" else 0), "pit": 12 + lvl, "ledge": 12,
                        "spikes": 6 + lvl, "gauntlet": 0 if lvl < 1 else 4 + 2 * lvl,
                        "spring": 5 if counts["spring"] < 2 else 0, "bump": 14 if self.zone == "syz" else 0}
             kind = rng.choices(list(weights), list(weights.values()))[0]
@@ -165,7 +177,8 @@ class Level:
                     pool += ["buzz"] if lvl >= 2 else []
                     foe(rng.choice(pool), (t0 + rng.randint(3, n - 2)) * 16)
                 if rng.random() < 0.2 and n >= 7:
-                    sp.append(("monitor", (t0 + n - 2) * 16, "ring" if rng.random() < 0.7 else "shield"))
+                    sp.append(("monitor", (t0 + n - 2) * 16,
+                               rng.choices(("ring", "shield", "shoes", "invinc", "life"), (40, 20, 15, 15, 10))[0]))
                 decorate(t0, t0 + n)
             elif kind == "hill":
                 rise = rng.choice((16, 24, 32, 40, 48))
@@ -200,6 +213,23 @@ class Level:
                     add(None)
                 x1 = len(dl) * 16
                 ring_arc(x0 - 16, x1 + 16, y - 10, 46, 7 + w // 2)
+                if self.zone == "ghz" and w >= 4 and rng.random() < 0.6:
+                    sp.append(("chopper", (x0 + x1) // 2, y + 80))
+                flat(3)
+            elif kind == "ledge":
+                flat(3)
+                rise = rng.choice((16, 32, 48))
+                up = H[-1] - rise >= YMIN or H[-1] + rise > YMAX
+                dy = -rise if up else rise
+                step(dy)
+                n = rng.randint(4, 8)
+                flat(n)
+                y = H[-1]
+                ring_line((t0 + 4) * 16, min(n, 5), y - 16)
+                if n >= 6 and rng.random() < 0.5:
+                    foe("moto", (t0 + 3 + n // 2) * 16)
+                decorate(t0 + 3, t0 + 3 + n)
+                step(-dy)
                 flat(3)
             elif kind == "spikes":
                 flat(3)
@@ -290,7 +320,7 @@ class Level:
         zt = D["zones"][self.zone]
         tiles, fill, lfill = zt["tiles"], zt["fill"], zt["lava_fill"]
         H, dl, L = self.H, self.dl, self.L
-        self.rmin = (min(H) // 16) * 16 - 16
+        self.rmin = (min(H + self.E) // 16) * 16 - 16
         reps = L // 32 + 1
         fgc = {}
         for wy in range(self.rmin, WH):
@@ -306,14 +336,15 @@ class Level:
                 if d is None:
                     if lava:
                         for r, row in enumerate(tiles[("lava", i % 2)]):
-                            fgc[LAVA_Y + r][a:b] = row
-                        for wy in range(LAVA_Y + 32, WH):
+                            if LAVA_Y + r < WH:
+                                fgc[LAVA_Y + r][a:b] = row
+                        for wy in range(LAVA_Y + TILE_ROWS, WH):
                             fgc[wy][a:b] = lfill[wy % 32][(i % 2) * 16 * SB:(i % 2 + 1) * 16 * SB]
                     continue
-                lo = min(H[i], H[i + 1])
+                lo = min(H[i], self.E[i])
                 base = lo // 16 * 16
-                rows = tiles[(i % 2, (base // 16) % 2, lo - base, H[i + 1] - H[i])]
-                for r in range(32):
+                rows = tiles[(i % 2, (base // 16) % 2, lo - base, d)]
+                for r in range(TILE_ROWS):
                     if base + r < WH:
                         fgc[base + r][a:b] = rows[r]
             yield
@@ -342,10 +373,6 @@ class Game:
         self.prev = [None] * VH
         self.end = None
         self.spec = None
-        self.hud_key = None
-        self.hud_rows = None
-        self.lives_key = None
-        self.lives_rows = None
         self.level = None
         self.t_act = 0
 
@@ -395,11 +422,14 @@ class Game:
             elif k == "sign":
                 st["sign"].append(O("sign", x, ph[x]))
             else:
-                o = O(k, x, ph[x])
+                o = O(k, x, ph[x] if ph[x] < INF else 0)
                 o.vx = 0.55 if self.rng.random() < 0.5 else -0.55
                 if k == "buzz":
                     o.y = ph[x] - self.rng.randint(44, 70)
                     o.a = o.y
+                elif k == "chopper":
+                    o.y = o.a = e
+                    o.vx = 0.0
                 else:
                     o.a = x
                     if k == "crab":
@@ -414,6 +444,9 @@ class Game:
         hz = [(p[0], p[1], "pit") for p in lv.pits]
         for o in self.stat["spikes"]:
             hz.append((o.x, o.x + 32 * o.a, "spikes"))
+        for x in range(1, lv.L):
+            if lv.ph[x - 1] < INF and lv.ph[x] < INF and lv.ph[x - 1] - lv.ph[x] > 14:
+                hz.append((x - 2, x + 2, "wall"))
         hz.sort()
         self.hazards = hz
         self.haz_x = [h[0] for h in hz]
@@ -443,17 +476,19 @@ class Game:
         self.snap = []
         self.sn = 0.0
         self.skid = False
+        self.idle_n = 0
+        self.top, self.acc = TOP, ACC
+        self.shoes_t = self.invinc_t = 0
         self.finishing = False
         self.sign_t = -1
         self.cam_x = max(0.0, min(self.x - 150, lv.L - VW))
-        self.cam_y = max(YMIN - 125.0, min(self.y - 124, YMAX - 100.0))
+        self.cam_y = max(YMIN - 176.0, min(self.y - FEET_Y, YMAX - 140.0))
         self.best_x, self.stall = self.x, 0
         self.anim = 0.0
         self.dead_t = 0
         self.t_act = 0
         self.dyn, self.foes = [], []
         self.pend_i = bisect_left([o.x for o in self.pending], self.x - 200)
-        self.hud_key = None
 
     # ---- bot ----------------------------------------------------------------------------------------
     def next_hazard(self, x):
@@ -468,6 +503,8 @@ class Game:
         # Landing right in front of spikes leaves no run-up to clear them, so the zone before spikes is wider.
         i = bisect_right(self.haz_x, x + 60)
         for h in self.hazards[max(0, i - 4):i]:
+            if h[2] == "wall":
+                continue
             pre = 54 if h[2] == "spikes" else 8
             if h[0] - pre < x < h[1] + 24:
                 return True
@@ -512,10 +549,10 @@ class Game:
         for t in range(120):
             if t >= hold_n and ys < JUMP_CUT and (jumped_now or self.ground):
                 ys = JUMP_CUT
-            if dirn > 0 and xs < TOP:
-                xs = min(xs + AIR_ACC, TOP)
-            elif dirn < 0 and xs > -TOP:
-                xs = max(xs - AIR_ACC, -TOP)
+            if dirn > 0 and xs < self.top:
+                xs = min(xs + AIR_ACC, self.top)
+            elif dirn < 0 and xs > -self.top:
+                xs = max(xs - AIR_ACC, -self.top)
             if -4 < ys < 0 and abs(xs) >= 0.125:
                 xs -= int(xs / 0.125) / 256
             x += xs
@@ -555,7 +592,9 @@ class Game:
         if f.k == "crab":
             return f.x, f.y - 12, 14, 10
         if f.k == "monitor":
-            return f.x, f.y - 14, 14, 13
+            return f.x, f.y - 15, 15, 14
+        if f.k == "chopper":
+            return f.x, f.y, 7, 11
         return f.x, f.y, 15, 8
 
     def bot(self):
@@ -642,16 +681,20 @@ class Game:
         return False
 
     def spikes_hit(self, path):
-        # Feet must stay well above the spike tips for the whole arc, not only where the jump started.
+        # Feet must stay clear of spike tips and of the top edge of a wall for the whole arc, not only at takeoff.
         if not path:
             return False
         ph, top = self.level.ph, self.level.L - 1
         lo, hi = path[0][0] - 12, path[-1][0] + 12
         for x0, x1, kind in self.hazards[bisect_left(self.haz_x, lo - 200):bisect_right(self.haz_x, hi)]:
-            if kind != "spikes":
+            if kind == "pit":
                 continue
+            edge = ph[min(x1 + 2, top)] - 4 if kind == "wall" else None
             for px, py in path:
-                if x0 - 10 < px < x1 + 10 and py > ph[min(int(px), top)] - 22:
+                if kind == "wall":
+                    if x0 - 9 < px < x1 + 9 and py > edge:
+                        return True
+                elif x0 - 10 < px < x1 + 10 and py > ph[min(int(px), top)] - 22:
                     return True
         return False
 
@@ -736,8 +779,8 @@ class Game:
                     self.skid = abs(gs) > 1.5
                     if gs >= 0:
                         gs = 0.5
-                elif gs < TOP:
-                    gs = min(TOP, gs + ACC)
+                elif gs < self.top:
+                    gs = min(self.top, gs + self.acc)
             elif dirn < 0:
                 self.facing = 1 if self.finishing else -1
                 if gs > 0:
@@ -745,8 +788,8 @@ class Game:
                     self.skid = gs > 1.5
                     if gs <= 0:
                         gs = -0.5
-                elif gs > -TOP:
-                    gs = max(-TOP, gs - ACC)
+                elif gs > -self.top:
+                    gs = max(-self.top, gs - self.acc)
             else:
                 gs -= math.copysign(min(abs(gs), FRC), gs)
             if down and abs(gs) >= 0.5:
@@ -784,12 +827,12 @@ class Game:
             ys = JUMP_CUT
         if dirn > 0:
             self.facing = 1
-            if xs < TOP:
-                xs = min(xs + AIR_ACC, TOP)
+            if xs < self.top:
+                xs = min(xs + AIR_ACC * (self.acc / ACC), self.top)
         elif dirn < 0:
             self.facing = -1
-            if xs > -TOP:
-                xs = max(xs - AIR_ACC, -TOP)
+            if xs > -self.top:
+                xs = max(xs - AIR_ACC * (self.acc / ACC), -self.top)
         if -4 < ys < 0 and abs(xs) >= 0.125:
             xs -= int(xs / 0.125) / 256
         self.move_air(xs, ys, GRAV)
@@ -846,7 +889,7 @@ class Game:
         self.dead_t = 0
 
     def take_hit(self, from_x):
-        if self.inv > 0 or self.hurt or self.dead or self.finishing:
+        if self.inv > 0 or self.hurt or self.dead or self.finishing or self.invinc_t > 0:
             return
         if self.shield:
             self.shield = False
@@ -910,7 +953,7 @@ class Game:
                 self.collect_ring()
                 self.dyn.append(O("spark", r.x, r.y))
         for o in self.near("monitor", x, 30):
-            if o.b == 0 and abs(o.x - x) < 20 and y > o.y - 28 and top < o.y:
+            if o.b == 0 and abs(o.x - x) < 22 and y > o.y - 30 and top < o.y:
                 if ball:
                     o.b = 1
                     self.bounce_on(o.y - 14)
@@ -919,8 +962,14 @@ class Game:
                     self.add_score(10)
                     if o.a == "ring":
                         self.collect_ring(10)
-                    else:
+                    elif o.a == "shield":
                         self.shield = True
+                    elif o.a == "shoes":
+                        self.shoes_t, self.top, self.acc = 1200, 12.0, 2 * ACC
+                    elif o.a == "invinc":
+                        self.invinc_t = 1200
+                    else:
+                        self.lives += 1
                 elif self.ground:
                     self.gs = 0.0
                     self.x = o.x - 20 if x < o.x else o.x + 20
@@ -953,7 +1002,7 @@ class Game:
                 continue
             bx, by, bw, bh = self.foe_box(f)
             if abs(x - bx) < bw + 7 and abs(cy - by) < bh + (12 if ball else 17):
-                if ball:
+                if ball or self.invinc_t > 0:
                     self.kill_foe(f)
                     self.bounce_on(by)
                 else:
@@ -982,11 +1031,21 @@ class Game:
                 continue
             f.t += 1
             if f.k == "moto":
+                if self.zone == "ghz" and f.t % 20 == 0:
+                    self.dyn.append(O("puff", f.x - (14 if f.vx > 0 else -14), f.y - 8))
                 f.x += f.vx
                 ix = int(f.x)
                 if abs(f.x - f.a) > 60 or lv.ph[min(max(ix + int(f.vx * 12), 0), lv.L - 1)] >= INF:
                     f.vx = -f.vx
                 f.y = lv.ph[min(max(int(f.x), 0), lv.L - 1)]
+            elif f.k == "chopper":
+                if f.vy == 0 and f.t % 110 == 0:
+                    f.vy = -7.5
+                if f.vy != 0:
+                    f.vy += GRAV
+                    f.y += f.vy
+                    if f.y >= f.a:
+                        f.y, f.vy = f.a, 0.0
             elif f.k == "crab":
                 if f.t % 150 < 100:
                     f.x += f.vx
@@ -1051,6 +1110,8 @@ class Game:
                 o.y -= 0.7 if o.t < 24 else 0
                 if o.t > 50:
                     o.alive = False
+            elif k == "puff" and o.t > 24:
+                o.alive = False
             elif k == "dust" and o.t > 18:
                 o.alive = False
         self.dyn = [o for o in self.dyn if o.alive and abs(o.x - self.cam_x - 160) < 700]
@@ -1067,13 +1128,13 @@ class Game:
         self.cam_x += max(-14.0, min(14.0, dx * 0.1))
         self.cam_x = max(0.0, min(lv.L - VW, self.cam_x))
         rel = self.y - self.cam_y
-        if rel < 60:
-            self.cam_y = self.y - 60
-        elif rel > 140:
-            self.cam_y = self.y - 140
+        if rel < 70:
+            self.cam_y = self.y - 70
+        elif rel > 196:
+            self.cam_y = self.y - 196
         elif self.ground:
-            self.cam_y += max(-2.5, min(2.5, (self.y - 124 - self.cam_y) * 0.06))
-        self.cam_y = max(YMIN - 125.0, min(YMAX - 100.0, self.cam_y))
+            self.cam_y += max(-2.5, min(2.5, (self.y - FEET_Y - self.cam_y) * 0.06))
+        self.cam_y = max(YMIN - 176.0, min(YMAX - 140.0, self.cam_y))
 
     # ---- one 60 Hz step ---------------------------------------------------------------------------------
     def sim_step(self):
@@ -1091,6 +1152,13 @@ class Game:
         self.update_dyn()
         if self.inv > 0 and not self.hurt:
             self.inv -= 1
+        if self.shoes_t > 0:
+            self.shoes_t -= 1
+            if self.shoes_t == 0:
+                self.top, self.acc = TOP, ACC
+        if self.invinc_t > 0:
+            self.invinc_t -= 1
+        self.idle_n = self.idle_n + 1 if self.ground and abs(self.gs) < 0.1 and not self.hurt else 0
         self.update_camera()
         if self.x > self.best_x + 2:
             self.best_x, self.stall = self.x, 0
@@ -1115,7 +1183,7 @@ class Game:
 
     # ---- rendering ---------------------------------------------------------------------------------------
     def sonic_sprite(self):
-        pose = "idle"
+        # Animation speed follows ground speed as in the original: the faster, the shorter each frame.
         gs = abs(self.gs)
         if self.dead or self.hurt:
             pose, i = "hurt", 0
@@ -1127,29 +1195,28 @@ class Game:
             else:
                 pose = "ball"
                 self.anim += 0.5
-                i = int(self.anim) % 5
+                i = int(self.anim) % 4
         elif self.rolling:
             pose = "ball"
-            self.anim += 0.35 + gs * 0.05
-            i = int(self.anim) % 5
+            self.anim += 2 / max(1.5, 5 - gs)
+            i = int(self.anim) % 4
         elif self.skid:
             pose = "skid"
             self.anim += 0.2
             i = int(self.anim) % 2
-        elif self.finishing and gs < 0.2:
-            pose = "wave"
-            self.anim += 0.12
-            i = int(self.anim) % 3
         elif gs < 0.1:
-            pose, i = "idle", 0
-        elif gs < 2.6:
-            pose = "walk"
-            self.anim += 0.12 + gs * 0.08
-            i = int(self.anim) % 6
+            if self.finishing and self.idle_n < 90:
+                pose = "wave"
+                self.anim += 0.12
+                i = int(self.anim) % 3
+            elif self.idle_n < 90:
+                pose, i = "idle", 0
+            else:
+                n = self.idle_n - 90
+                pose, i = "wait", (0 if n < 60 else 1 + (n // 14) % 2)
         elif gs < 5.8:
-            pose = "run"
-            self.anim += 0.3 + gs * 0.04
-            i = int(self.anim) % 4
+            self.anim += 2 / max(2.5, 9 - gs)
+            pose, i = ("walk", int(self.anim) % 6) if gs < 3.2 else ("run", int(self.anim) % 4)
         else:
             pose = "blur"
             self.anim += 0.5
@@ -1158,7 +1225,7 @@ class Game:
 
     def build_bg(self, camx, camy):
         spec = self.spec
-        bgy = max(0, min(24, int((camy - 80) * 0.12)))
+        bgy = max(0, min(24, int((camy - 40) * 0.1)))
         t = self.tick
         rows = []
         fidx = (t // 6) % 3
@@ -1169,7 +1236,9 @@ class Game:
             if wave:
                 off = (off + WAVE[(r * 3 + t // 2) & 63]) % P
             base = fr[0] if len(fr) == 1 else fr[fidx]
-            rows.append(base[off * SB:off * SB + VW * SB])
+            row = bytearray(BLACKROW)
+            row[LEFT:LEFT + VW * SB] = base[off * SB:off * SB + VW * SB]
+            rows.append(row)
         return rows
 
     def build_terrain(self, rows, camx, camy):
@@ -1190,7 +1259,7 @@ class Game:
                 if nxt > x1:
                     nxt = x1
                 if st:
-                    row[(pos - camx) * SB:(nxt - camx) * SB] = fg[pos * SB:nxt * SB]
+                    row[LEFT + (pos - camx) * SB:LEFT + (nxt - camx) * SB] = fg[pos * SB:nxt * SB]
                 pos, st, j = nxt, not st, j + 1
 
     def draw_world(self, rows, camx, camy):
@@ -1207,12 +1276,12 @@ class Game:
                 draw(rows, D["spikes"], int(o.x - camx) + 32 * i, int(o.y - camy) - 16)
         for o in self.near_range("spring", camx - 20, camx + VW + 20):
             fr = D["spring_red" if o.a == "red" else "spring_yel"]
-            draw(rows, fr[1 if o.t > 0 else 0], int(o.x - camx) - 10, int(o.y - camy) - 16)
+            draw(rows, fr[1 if o.t > 0 else 0], int(o.x - camx) - 14, int(o.y - camy) - 16)
         for o in self.near_range("monitor", camx - 20, camx + VW + 20):
             if o.b:
-                draw(rows, D["monitor"]["broken"], int(o.x - camx) - 14, int(o.y - camy) - 28)
+                draw(rows, D["monitor"]["broken"], int(o.x - camx) - 16, int(o.y - camy) - 32)
             else:
-                draw(rows, D["monitor"][o.a][(t // 3) % 2], int(o.x - camx) - 14, int(o.y - camy) - 28)
+                draw(rows, D["monitor"][o.a][(t // 3) % 2], int(o.x - camx) - 16, int(o.y - camy) - 32)
         for o in self.near_range("bumper", camx - 24, camx + VW + 24):
             draw(rows, D["bumper"][1 if o.t > 0 else 0], int(o.x - camx) - 20, int(o.y - camy) - 20)
         for o in self.near_range("sign", camx - 40, camx + VW + 40):
@@ -1232,7 +1301,14 @@ class Game:
                 continue
             sx, sy = int(f.x - camx), int(f.y - camy)
             if f.k == "moto":
-                draw(rows, D["moto" if f.vx < 0 else "moto_r"][(t // 4) % 2], sx - 16, sy - 24)
+                if zone == "mz":
+                    draw(rows, D["cater_r" if f.vx < 0 else "cater"][(t // 8) % 2], sx - 20, sy - 22)
+                elif zone == "syz":
+                    draw(rows, D["roller" if f.vx < 0 else "roller_r"][(t // 3) % 2], sx - 14, sy - 24)
+                else:
+                    draw(rows, D["moto" if f.vx < 0 else "moto_r"][(t // 4) % 2], sx - 16, sy - 24)
+            elif f.k == "chopper":
+                draw(rows, D["chopper"][(t // 6) % 2], sx - 9, sy - 13)
             elif f.k == "crab":
                 draw(rows, D["crab"][(t // 10) % 2], sx - 18, sy - 26)
             else:
@@ -1255,108 +1331,109 @@ class Game:
                 draw(rows, D["monitor"]["icons"][o.a], sx - 7, sy - 7)
             elif k == "dust":
                 draw(rows, D["dust"][min(3, o.t // 5)], sx - 7, sy - 12)
+            elif k == "puff":
+                draw(rows, D["puff"][min(2, o.t // 8)], sx - 5, sy - 5)
         if not (self.inv > 0 and not self.hurt and self.tick % 2):
             spr = self.sonic_sprite()
             sx, sy = int(self.x - camx), int(self.y - camy)
-            draw(rows, spr, sx - 20, sy - 44)
+            draw(rows, spr, sx - 17, sy - 38)
             if self.shield and not self.dead:
-                draw(rows, D["shield"][t % 2], sx - 22, sy - 44 + 2)
+                draw(rows, D["shield"][t % 2], sx - 22, sy - 42)
+            if self.invinc_t > 0:
+                for k in range(3):
+                    a = t * 0.35 + k * 2.1
+                    draw(rows, D["sparkle"][(t // 3 + k) % 5], sx + int(14 * math.cos(a)) - 8, sy - 20 + int(16 * math.sin(a)) - 8)
 
     def near_range(self, kind, lo, hi):
         xs = self.stat_x[kind]
         return self.stat[kind][bisect_left(xs, lo):bisect_right(xs, hi)]
 
-    def plate(self, w, h):
-        rows = [bytearray(ck(14, 16, 48) * w) for _ in range(h)]
-        edge = ck(90, 100, 170)
-        for r in (0, h - 1):
-            rows[r][:] = edge * w
-        for r in range(h):
-            rows[r][0:SB] = edge
-            rows[r][(w - 1) * SB:w * SB] = edge
-        return rows
-
     def build_hud(self, rows):
         secs = min(self.t_act // 60, 5999)
         blink = self.rings == 0 and (self.tick // 8) % 2 == 0
-        key = (self.score, secs, self.rings, blink)
-        if key != self.hud_key:
-            self.hud_key = key
-            pr = self.plate(96, 40)
-            put_text(pr, "SCORE", 4, 3, "S", "yellow", 96)
-            put_text(pr, "%7d" % self.score, 44, 3, "S", "white", 96)
-            put_text(pr, "TIME", 4, 15, "S", "yellow", 96)
-            put_text(pr, "%d:%02d" % (secs // 60, secs % 60), 44, 15, "S", "white", 96)
-            put_text(pr, "RINGS", 4, 27, "S", "red" if blink else "yellow", 96)
-            put_text(pr, "%3d" % self.rings, 44, 27, "S", "white", 96)
-            self.hud_rows = pr
-        for i, r in enumerate(self.hud_rows):
-            rows[4 + i][4 * SB:100 * SB] = r
-        key = self.lives
-        if key != self.lives_key:
-            self.lives_key = key
-            pr = self.plate(40, 18)
-            draw(pr, D["life"], 3, 2, 40)
-            put_text(pr, "X%d" % self.lives, 20, 2, "S", "white", 40)
-            self.lives_rows = pr
-        for i, r in enumerate(self.lives_rows):
-            rows[VH - 22 + i][4 * SB:44 * SB] = r
+        put_text(rows, "SCORE", 16, 8, "S", "yellow")
+        put_text(rows, "%d" % self.score, 120 - text_width("%d" % self.score, "S"), 8, "S", "white")
+        put_text(rows, "TIME", 16, 24, "S", "yellow")
+        put_text(rows, "%d:%02d" % (secs // 60, secs % 60), 64, 24, "S", "white")
+        put_text(rows, "RINGS", 16, 40, "S", "red" if blink else "yellow")
+        put_text(rows, "%d" % self.rings, 96 - text_width("%d" % self.rings, "S"), 40, "S", "white")
+        draw(rows, D["life"], 10, 190)
+        put_text(rows, "SONIC", 30, 190, "S", "yellow")
+        put_text(rows, "X %d" % self.lives, 34, 201, "S", "white")
 
     def flush(self, rows):
         prev = self.prev
         for vy in range(VH):
             r = rows[vy]
             if r != prev[vy]:
-                o = vy * S6
-                fb[o:o + S6] = r * 6
+                o = vy * S5
+                fb[o:o + S5] = r * PX
                 prev[vy] = r
 
     def render_play(self):
         camx, camy = int(self.cam_x), int(self.cam_y)
-        rows = [bytearray(r) for r in self.build_bg(camx, camy)]
+        rows = self.build_bg(camx, camy)
         self.build_terrain(rows, camx, camy)
         self.draw_world(rows, camx, camy)
         self.build_hud(rows)
         self.flush(rows)
 
     def black_rows(self):
-        black = ck(0, 0, 0) * VW
-        return [bytearray(black) for _ in range(VH)]
+        return [bytearray(BLACKROW) for _ in range(VH)]
+
+    def slab(self, rows, x, y, w, h, slant, col):
+        # A parallelogram leaning right by `slant` px, as used by the original title cards.
+        for r in range(h):
+            fill_span(rows, x + int(slant * (1 - r / h)), y + r, w, 1, col)
+
+    def disc(self, rows, cx, cy, rad, col):
+        for r in range(-rad, rad + 1):
+            hw = int(math.sqrt(rad * rad - r * r))
+            fill_span(rows, cx - hw, cy + r, 2 * hw + 1, 1, col)
 
     def render_card(self, t):
         zi, act = divmod(self.act_index, 3)
-        name, col = ZONES[zi][1], ZONES[zi][2]
+        name = ZONES[zi][1]
         rows = self.black_rows()
-        if t < 14:
-            e = 1 - t / 14
-        elif t > 76:
-            e = (t - 76) / 14
+        if t < 16:
+            e = 1 - t / 16
+        elif t > 74:
+            e = -(t - 74) / 16
         else:
             e = 0.0
-        off = int(e * e * 340) * (1 if t < 14 else -1)
-        light = tuple(min(255, c + 90) for c in col)
-        fill_span(rows, off, 52, VW, 76, ck(250, 250, 250))
-        fill_span(rows, off, 55, VW, 70, ck(*col))
-        fill_span(rows, off, 55, VW, 6, ck(*light))
-        draw(rows, D["sonic"]["wave"][(t // 6) % 3], 18 + off, 72)
-        put_text(rows, name, 190 - text_width(name, "L") // 2 + off, 64, "L", "white")
-        put_text(rows, "ZONE", 84 + off, 94, "L", "yellow")
-        put_text(rows, "ACT %d" % (act + 1), 214 + off, 94, "L", "white")
-        fill_span(rows, 20 + off - 80 * (1 if off < 0 else 0), 40, 44, 4, ck(252, 220, 40))
-        fill_span(rows, 20 + off, 134, 120, 4, ck(230, 50, 50))
+        off = int(e * abs(e) * 380)
+        edge = ZONES[zi][2]
+        self.slab(rows, 6 + off, 20, 120, 12, 16, ck(224, 224, 0))
+        self.slab(rows, 30 + off, 34, 170, 5, 16, ck(224, 96, 0))
+        self.slab(rows, 20 + off, 62, 276, 62, 20, ck(224, 224, 224))
+        self.slab(rows, 24 + off, 65, 268, 56, 20, ck(*edge))
+        self.slab(rows, 24 + off, 65, 268, 6, 20, ck(96, 128, 224))
+        put_text(rows, name, 160 - text_width(name, "L") // 2 + off, 70, "L", "white")
+        put_text(rows, "ZONE", 130 + off, 144, "L", "yellow")
+        self.disc(rows, 60 + off, 158, 34, ck(224, 224, 224))
+        self.disc(rows, 60 + off, 158, 31, ck(224, 0, 0))
+        self.disc(rows, 60 + off, 158, 24, ck(224, 224, 0))
+        put_text(rows, "ACT", 60 - text_width("ACT", "M") // 2 + off, 138, "M", "white")
+        num = "%d" % (act + 1)
+        put_text(rows, num, 60 - text_width(num, "L") // 2 + off, 152, "L", "white")
+        draw(rows, D["sonic"]["wave"][(t // 6) % 3], 240 + off, 150)
         self.flush(rows)
 
     def render_results(self, t):
         zi, act = divmod(self.act_index, 3)
         rows = self.black_rows()
-        for i, (line, col) in enumerate((("SONIC HAS PASSED", "white"), ("%s ZONE" % ZONES[zi][1], "yellow"),
-                                         ("ACT %d" % (act + 1), "yellow"))):
-            put_text(rows, line, 160 - text_width(line, "L") // 2, 14 + i * 30, "L", col)
+        put_text(rows, "SONIC HAS", 160 - text_width("SONIC HAS", "L") // 2, 22, "L", "white")
+        put_text(rows, "PASSED", 130 - text_width("PASSED", "L") // 2, 54, "L", "white")
+        self.disc(rows, 266, 82, 28, ck(224, 224, 224))
+        self.disc(rows, 266, 82, 25, ck(224, 0, 0))
+        put_text(rows, "ACT", 266 - text_width("ACT", "M") // 2, 62, "M", "yellow")
+        put_text(rows, "%d" % (act + 1), 266 - text_width("%d" % (act + 1), "L") // 2, 76, "L", "white")
         for i, (lab, val) in enumerate((("SCORE", self.score), ("TIME BONUS", self.time_bonus_left),
                                         ("RING BONUS", self.ring_bonus_left))):
-            y = 116 + i * 18
-            put_text(rows, lab, 62, y, "S", "yellow")
-            put_text(rows, "%7d" % val, 62 + 130, y, "S", "white")
+            y = 122 + i * 22
+            put_text(rows, lab, 56, y, "S", "yellow")
+            txt = "%d" % val
+            put_text(rows, txt, 264 - text_width(txt, "S"), y, "S", "white")
         self.flush(rows)
 
     # ---- state machine -----------------------------------------------------------------------------------
@@ -1399,7 +1476,7 @@ class Game:
                 self.spawn_objects()
                 self.reset_player(40)
                 self.set_state("play")
-            elif self.sign_t > 260 and self.gs == 0.0 and self.ground:
+            elif self.finishing and self.ground and (self.idle_n > 320 or self.sign_t > 900):
                 self.begin_results()
         elif st == "results":
             self.results_tick()

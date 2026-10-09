@@ -1,17 +1,26 @@
 # Build-time art for the Sonic-style platformer (runs on the dev machine with PIL, writes g_sonic.bin).
 #
-# Everything is drawn procedurally. One "virtual pixel" (vpx) is a 6x6 block of screen pixels, so a sprite
-# row is stored as a list of opaque runs whose bytes are already expanded 6x horizontally (12 bytes per vpx):
-# the game then patches runs into per-scanline byte rows without any per-pixel Python.
-import math, random, struct, sys
-from PIL import Image, ImageDraw, ImageFont
-from buildlib import save_bundle, rgb565, BOLD, MONO
+# The game renders a native 320x216 picture and shows it at x5 (1600x1080, black side bars), so everything here is
+# drawn at Mega Drive scale: a sprite row is stored as a list of opaque runs whose bytes are already expanded 5x
+# horizontally (10 bytes per pixel). All colours are snapped to the Mega Drive's 8 levels per channel (steps of 32),
+# which is what gives the picture its look; the game then patches runs into per-scanline byte rows without any
+# per-pixel Python.
+import math, random, struct
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
+from buildlib import save_bundle, rgb565
 
-K = 6
+K = 5
+FONT_MONO = "/usr/share/fonts/TTF/DejaVuSansMono-BoldOblique.ttf"
+FONT_BIG = "/usr/share/fonts/TTF/DejaVuSans-BoldOblique.ttf"
 _chunks = {}
 
 
+def snap(rgb):
+    return tuple(min(224, (v + 16) // 32 * 32) for v in rgb[:3])
+
+
 def chunk(rgb):
+    rgb = snap(rgb)
     c = _chunks.get(rgb)
     if c is None:
         c = _chunks[rgb] = struct.pack("<H", rgb565(*rgb)) * K
@@ -55,13 +64,14 @@ def down(im, w, h):
     return r
 
 
-OUT = (14, 18, 64)
-BL, BLD, BLL = (36, 96, 224), (22, 58, 170), (110, 170, 255)
-SK, SKD = (248, 200, 150), (214, 152, 104)
-RD, RDD = (224, 36, 36), (146, 16, 34)
-WH = (250, 250, 250)
-GRN = (30, 170, 70)
-GOLD, GOLDD, GOLDL = (255, 208, 32), (176, 96, 0), (255, 246, 160)
+
+OUT = (0, 0, 96)
+BL, BLD, BLL = (32, 64, 224), (32, 32, 160), (96, 128, 224)
+SK, SKD = (224, 160, 128), (192, 128, 96)
+RD, RDD = (224, 32, 0), (160, 0, 0)
+WH = (224, 224, 224)
+GRN = (0, 160, 0)
+GOLD, GOLDD, GOLDL = (224, 192, 0), (160, 96, 0), (224, 224, 128)
 
 
 class C:
@@ -109,6 +119,8 @@ class C:
 
 
 # ---------------------------------------------------------------------------------------------- Sonic
+
+
 def head(c, hx, hy, eye="open", mouth=False, trail=0.0):
     q = [[(hx - 2, hy - 9), (hx - 9, hy - 2), (hx - 18 - trail * 3, hy - 10 + trail * 2)],
          [(hx - 8, hy - 5), (hx - 8, hy + 6), (hx - 20 - trail * 3, hy + 3 + trail * 3)],
@@ -133,10 +145,9 @@ def head(c, hx, hy, eye="open", mouth=False, trail=0.0):
         c.line((hx + 5.5, hy + 6.8), (hx + 9.5, hy + 6.2), 0.5, OUT, out=None)
 
 
-def shoe(c, ax, ay):
-    c.ell(ax + 1.3, ay - 0.6, 5.5, 3.1, RD)
-    c.ell(ax - 0.6, ay - 1.9, 1.5, 1.2, WH, out=None)
-    c.line((ax - 3.8, ay + 1.9), (ax + 6.0, ay + 1.9), 0.9, (230, 230, 240), out=None)
+def arm(c, sh, hand):
+    c.line(sh, hand, 2.6, SK)
+    c.ell(hand[0], hand[1], 2.6, 2.6, (245, 245, 250))
 
 
 def leg(c, hip, ankle):
@@ -144,14 +155,35 @@ def leg(c, hip, ankle):
     shoe(c, *ankle)
 
 
-def arm(c, sh, hand):
-    c.line(sh, hand, 2.6, SK)
-    c.ell(hand[0], hand[1], 2.6, 2.6, (245, 245, 250))
+def head_front(c, hx, hy, mouth=False):
+    # Facing the viewer: used by the impatient "waiting" animation.
+    for s in (-1, 1):
+        c.poly([(hx + s * 5, hy - 8), (hx + s * 11, hy - 2), (hx + s * 19, hy - 9)], BL)
+        c.poly([(hx + s * 8, hy - 3), (hx + s * 9, hy + 6), (hx + s * 20, hy + 3)], BL)
+    c.poly([(hx - 3, hy - 8), (hx, hy - 15), (hx + 3, hy - 8)], BL)
+    c.ell(hx, hy, 9.6, 9.2, BL)
+    c.ell(hx, hy + 4.5, 5.6, 4.4, SK)
+    for s in (-1, 1):
+        c.ell(hx + s * 3.3, hy - 2.4, 3.3, 4.8, WH)
+        c.ell(hx + s * 3.0, hy - 1.6, 1.4, 2.6, GRN, out=None)
+        c.ell(hx + s * 3.0, hy - 1.5, 0.8, 1.6, OUT, out=None)
+    c.ell(hx, hy + 2.6, 1.6, 1.3, OUT, out=None)
+    if mouth:
+        c.ell(hx, hy + 7, 2.2, 1.6, RDD, out=None)
+    else:
+        c.line((hx - 3, hy + 7), (hx + 3, hy + 7), 0.5, OUT, out=None)
+
+
+def shoe(c, ax, ay):
+    c.ell(ax + 1.3, ay - 0.6, 5.8, 3.3, RD)
+    c.rect(ax - 1.8, ay - 3.0, ax + 0.8, ay + 0.6, WH, out=None)
+    c.rect(ax - 0.9, ay - 2.2, ax + 0.1, ay - 0.6, GOLD, out=None)
+    c.line((ax - 4.0, ay + 2.0), (ax + 6.4, ay + 2.0), 0.9, (224, 224, 224), out=None)
 
 
 def torso(c, tx, ty):
-    c.ell(tx, ty, 6.3, 8.4, BL)
-    c.ell(tx + 2.4, ty + 1.8, 3.5, 5.6, SK, out=None)
+    c.ell(tx, ty, 5.8, 7.8, BL)
+    c.ell(tx + 2.2, ty + 1.6, 3.2, 5.2, SK, out=None)
 
 
 def sonic_frame(kind, ph=0.0):
@@ -164,16 +196,18 @@ def sonic_frame(kind, ph=0.0):
                     (cx + 9 * math.cos(a + 0.35), cy + 9 * math.sin(a + 0.35)),
                     (cx + 14.4 * math.cos(a), cy + 14.4 * math.sin(a))], BLD)
         c.ell(cx, cy, 12, 12, BL)
-        c.ell(cx + 6 * math.cos(ph + 1), cy + 6 * math.sin(ph + 1), 3.6, 3.6, SK, out=None)
-        c.ell(cx + 7 * math.cos(ph + 3.9), cy + 7 * math.sin(ph + 3.9), 3.3, 2.7, RD, out=None)
-        c.ell(cx + 6 * math.cos(ph + 2.5), cy + 6 * math.sin(ph + 2.5), 2.2, 2.2, BLL, out=None)
-        return c.done()
+        for k in range(3):
+            a0 = math.degrees(ph) * 2 + k * 120
+            c.d.pieslice([(cx - 10) * 8, (cy - 10) * 8, (cx + 10) * 8, (cy + 10) * 8], a0, a0 + 50, fill=WH)
+        c.ell(cx, cy, 3.5, 3.5, BLL, out=None)
+        return down(c.im, 34, 38)
     hx, hy, tx, ty = 22, 15, 19.5, 27
     hip = (19.5, 33)
     eye, mouth, trail = "open", False, 0.0
     far_leg, near_leg = (15.5, 40.6), (23.8, 40.6)
     far_arm, near_arm = (14.2, 33), (25, 33.5)
     blur = False
+    front = False
     if kind == "walk":
         s, co = math.sin(ph), math.cos(ph)
         far_leg = (19.5 - 5.5 * s, 40.6 - 3.2 * max(0, -co))
@@ -188,7 +222,6 @@ def sonic_frame(kind, ph=0.0):
         hx, hy, tx, ty, trail = 25, 16, 21, 28, 1.0
         hip = (20.5, 34)
         far_arm, near_arm = (11.5, 29 + 2 * s), (13.5, 31 - 2 * s)
-        mouth = False
     elif kind == "blur":
         hx, hy, tx, ty, trail = 26, 16.5, 22, 28.5, 1.4
         hip = (21, 34)
@@ -203,7 +236,7 @@ def sonic_frame(kind, ph=0.0):
     elif kind == "hurt":
         hx, hy, tx, ty = 20, 15, 19, 27.5
         far_leg, near_leg = (13.5, 39.5), (26, 38.5)
-        far_arm, near_arm = (12.5, 16.5), (27, 17)
+        far_arm, near_arm = (7.5, 24), (32, 24)
         eye, mouth = "x", True
     elif kind == "spring":
         far_leg, near_leg = (18, 40.6), (21.8, 40.6)
@@ -211,9 +244,20 @@ def sonic_frame(kind, ph=0.0):
         mouth = True
     elif kind == "wave":
         near_arm = (28.5 + 1.5 * math.sin(ph), 21 - 1.5 * abs(math.sin(ph)))
+    elif kind == "wait":
+        # frame 0: looks at the viewer, hand on hip; frames 1 and 2: foot taps
+        front = True
+        hx, hy, tx = 20, 15, 19
+        near_arm = (27, 32)
+        far_arm = (12, 32)
+        if ph == 1:
+            near_leg = (24.5, 38.6)
     elif kind != "idle":
         raise ValueError(kind)
-    head(c, hx, hy, eye, mouth, trail)
+    if front:
+        head_front(c, hx, hy, False)
+    else:
+        head(c, hx, hy, eye, mouth, trail)
     arm(c, (tx - 1, ty - 3), far_arm)
     if blur:
         c.ell(hip[0] - 1.5, 38.2, 8.4, 5.3, RD)
@@ -225,17 +269,23 @@ def sonic_frame(kind, ph=0.0):
         leg(c, hip, far_leg)
         leg(c, hip, near_leg)
     torso(c, tx, ty)
-    arm(c, (tx + 1.5, ty - 3), near_arm)
-    return c.done()
+    if kind == "wait":
+        arm(c, (tx + 1.5, ty - 3), (tx + 8, ty + 2))
+        c.line((tx + 8, ty + 2), near_arm, 2.4, SK)
+        c.ell(near_arm[0], near_arm[1], 2.6, 2.6, (224, 224, 224))
+    else:
+        arm(c, (tx + 1.5, ty - 3), near_arm)
+    return down(c.im, 34, 38)
 
 
 def sonic_sets():
     right = {
         "idle": [sonic_frame("idle")],
+        "wait": [sonic_frame("wait", i) for i in range(3)],
         "walk": [sonic_frame("walk", i * math.pi / 3) for i in range(6)],
         "run": [sonic_frame("run", i * math.pi / 2) for i in range(4)],
         "blur": [sonic_frame("blur", i * 0.9) for i in range(2)],
-        "ball": [sonic_frame("ball", i * math.pi / 5) for i in range(5)],
+        "ball": [sonic_frame("ball", i * math.pi / 5) for i in range(4)],
         "skid": [sonic_frame("skid", 0), sonic_frame("skid", 1)],
         "hurt": [sonic_frame("hurt")],
         "spring": [sonic_frame("spring")],
@@ -245,13 +295,16 @@ def sonic_sets():
             {k: [run_sprite(flip(f)) for f in v] for k, v in right.items()})
 
 
-def life_icon():
+def head_icon(size):
     c = C(40, 44)
     head(c, 22, 15, "open", False, 0)
-    return run_sprite(down(c.im.crop((6 * 8, 0, 34 * 8, 28 * 8)), 14, 14))
+    return down(c.im.crop((6 * 8, 0, 34 * 8, 28 * 8)), size, size)
 
 
-# ------------------------------------------------------------------------------------- small objects
+def life_icon():
+    return run_sprite(head_icon(16))
+
+
 def ring_frames():
     out = []
     for w in (14, 10, 3, 10):
@@ -274,20 +327,6 @@ def sparkle_frames():
     return out
 
 
-def spring_frames(top):
-    out = []
-    for h in (15, 8):
-        c = C(20, 16)
-        c.rect(1, 13, 19, 16, (70, 74, 90))
-        n = 4
-        for i in range(n):
-            c.line((4, 13 - i * (h - 5) / n), (16, 13 - (i + 0.5) * (h - 5) / n), 1.8, (225, 228, 238))
-            c.line((16, 13 - (i + 0.5) * (h - 5) / n), (4, 13 - (i + 1) * (h - 5) / n), 1.8, (180, 184, 200))
-        c.rect(1, 16 - h - 0.5, 19, 16 - h + 3, top)
-        out.append(run_sprite(c.done()))
-    return out
-
-
 def spikes_sprite():
     c = C(32, 16)
     for i in range(4):
@@ -296,44 +335,6 @@ def spikes_sprite():
         c.line((x + 4, 2), (x + 4, 13), 0.7, (150, 156, 180), out=None)
     c.rect(0, 13.5, 32, 16, (80, 84, 110))
     return run_sprite(c.done())
-
-
-def monitor_frames():
-    out = {}
-    for kind in ("ring", "shield"):
-        fr = []
-        for lit in (0, 1):
-            c = C(28, 28)
-            c.rect(1, 3, 27, 26, (176, 182, 200))
-            c.rect(3.5, 5.5, 24.5, 21.5, (18, 24, 60) if lit else (30, 44, 100), out=(80, 90, 120))
-            if kind == "ring":
-                c.ell(14, 13.5, 5, 5, GOLD, out=GOLDD)
-                c.hole(14, 13.5, 2.4, 2.4)
-            else:
-                c.ell(14, 13.5, 5.6, 5.6, (80, 150, 255), out=(180, 220, 255))
-                c.ell(12.5, 11.5, 1.6, 1.6, WH, out=None)
-            if lit:
-                c.line((5, 7), (9, 7), 0.8, (200, 230, 255), out=None)
-            c.rect(2, 23, 26, 27, (110, 116, 140))
-            fr.append(run_sprite(c.done()))
-        out[kind] = fr
-    c = C(28, 28)
-    c.rect(1, 3, 27, 26, (150, 154, 170))
-    c.rect(3.5, 5.5, 24.5, 21.5, (28, 28, 40), out=(70, 74, 96))
-    c.rect(2, 23, 26, 27, (96, 100, 120))
-    out["broken"] = run_sprite(c.done())
-    icons = {}
-    for kind in ("ring", "shield"):
-        c = C(14, 14)
-        if kind == "ring":
-            c.ell(7, 7, 5.5, 5.5, GOLD, out=GOLDD)
-            c.hole(7, 7, 2.8, 2.8)
-        else:
-            c.ell(7, 7, 6, 6, (80, 150, 255), out=(180, 220, 255))
-            c.ell(5.4, 5, 1.6, 1.6, WH, out=None)
-        icons[kind] = run_sprite(c.done())
-    out["icons"] = icons
-    return out
 
 
 def shield_frames():
@@ -347,35 +348,6 @@ def shield_frames():
             r = (200, 235, 255) if (i + f) % 2 else (90, 160, 255)
             x, y = 22 + 20.5 * math.cos(a), 25 + 22.5 * math.sin(a)
             c.ell(x, y, 1.5, 1.5, r, out=None)
-        out.append(run_sprite(c.done()))
-    return out
-
-
-def sign_frames():
-    out = []
-    for kind, w in (("evil", 28), ("edge", 5), ("back", 28), ("edge", 5), ("goal", 28)):
-        c = C(32, 48)
-        c.rect(14, 18, 18, 47, (190, 194, 210))
-        c.ell(16, 46, 5, 2.4, (120, 124, 150))
-        x0, x1 = 16 - w / 2, 16 + w / 2
-        if kind == "edge":
-            c.rect(x0, 1, x1, 21, (230, 230, 240))
-        else:
-            col = {"evil": (190, 30, 50), "back": (150, 156, 176), "goal": (30, 86, 214)}[kind]
-            c.rect(x0, 1, x1, 21, col, out=(250, 250, 250), ow=1.0)
-            if kind == "evil":
-                c.ell(16, 11, 7, 6.5, (250, 150, 40))
-                c.line((10, 8), (14, 10), 1.3, OUT, out=None)
-                c.line((22, 8), (18, 10), 1.3, OUT, out=None)
-                c.line((10, 14), (22, 14), 1.4, OUT, out=None)
-            elif kind == "back":
-                for rx in (x0 + 3, x1 - 3):
-                    for ry in (4, 18):
-                        c.ell(rx, ry, 1, 1, (90, 94, 110), out=None)
-            else:
-                c.poly([(16 + 7.5 * math.sin(i * math.pi / 5) * (1 if i % 2 == 0 else 0.45),
-                         11 - 7.5 * math.cos(i * math.pi / 5) * (1 if i % 2 == 0 else 0.45)) for i in range(10)],
-                       GOLD, out=GOLDD, ow=0.6)
         out.append(run_sprite(c.done()))
     return out
 
@@ -404,6 +376,8 @@ def dust_frames():
 
 
 # ------------------------------------------------------------------------------------------ enemies
+
+
 def motobug_frames():
     out = []
     for f in range(2):
@@ -416,7 +390,7 @@ def motobug_frames():
         c.rect(7, 18 - f * 0.5, 28, 21, (60, 62, 80), out=OUT)
         for sx, sy, sr in ((18, 8, 2.4), (23, 12, 2.1), (13, 12, 1.8)):
             c.ell(sx, sy - f * 0.5, sr, sr, OUT, out=None)
-        c.ell(6, 12, 4.2, 4.6, (240, 230, 200))
+        c.ell(6, 12, 4.2, 4.6, (160, 160, 192))
         c.ell(5.2, 11.2, 1.5, 1.8, OUT, out=None)
         c.line((4, 7), (1.5, 3), 0.7, OUT, out=None)
         c.ell(27.5, 15, 1.6, 1.6, (150, 150, 160), out=None)
@@ -525,29 +499,6 @@ def animal_frames():
 
 
 # ------------------------------------------------------------------------------------------- decor
-def palm_frames():
-    out = []
-    for f in range(2):
-        c = C(48, 76)
-        pts = [(24, 76), (22, 60), (21.5, 44), (24, 30), (28, 20)]
-        for a, b in zip(pts, pts[1:]):
-            c.line(a, b, 4.4, (170, 100, 40), out=(80, 40, 10))
-        for i in range(1, 11):
-            y = 76 - i * 5.6
-            xx = 24 - 2.5 * math.sin(i / 4.2)
-            c.line((xx - 2.3, y), (xx + 2.3, y - 0.6), 0.9, (110, 60, 20), out=None)
-        tx, ty = 28, 19
-        sw = 0.18 * (f * 2 - 1)
-        for ang in (-2.7, -2.1, -1.5, -0.9, -0.35, 0.2):
-            a = ang + sw
-            ex, ey = tx + 21 * math.cos(a), ty + 12 * math.sin(a) + 11 * (1 - abs(math.sin(a)))
-            mx, my = tx + 11 * math.cos(a), ty + 12 * math.sin(a) - 5
-            c.poly([(tx, ty), (mx - 1.5, my - 3.5), (ex, ey), (mx + 1.5, my + 2.5)], (36, 160, 60), out=(10, 70, 30))
-            c.line((tx, ty), (ex, ey), 0.7, (130, 220, 90), out=None)
-        c.ell(tx - 1, ty + 2.5, 2.4, 2.4, (120, 70, 30))
-        c.ell(tx + 2.2, ty + 3, 2.4, 2.4, (120, 70, 30))
-        out.append(run_sprite(c.done()))
-    return out
 
 
 def totem_sprite():
@@ -563,29 +514,6 @@ def totem_sprite():
         c.ell(12.7, y + 6.2, 0.7, 0.8, OUT, out=None)
         c.poly([(8, y + 8.2), (12, y + 8.2), (10, y + 12)], b, out=OUT, ow=0.4)
     c.poly([(1, 4), (10, 1), (19, 4), (10, 6)], (250, 220, 60), out=(60, 30, 10))
-    return run_sprite(c.done())
-
-
-def flower_frames():
-    out = []
-    for f in range(2):
-        c = C(16, 24)
-        c.line((8, 24), (8 + f * 0.6, 11), 1.2, (30, 130, 40), out=None)
-        c.poly([(8, 20), (13, 15), (10, 21)], (40, 160, 50), out=None)
-        for k in range(8):
-            a = k * math.pi / 4 + f * 0.4
-            c.ell(8 + f * 0.6 + 4.6 * math.cos(a), 8 + 4.6 * math.sin(a), 2.2, 2.2, (255, 220, 40), out=(170, 90, 10), ow=0.5)
-        c.ell(8 + f * 0.6, 8, 3, 3, (130, 70, 30), out=(70, 30, 10), ow=0.5)
-        out.append(run_sprite(c.done()))
-    return out
-
-
-def bush_sprite():
-    c = C(26, 14)
-    for cx, cy, r in ((7, 9, 6), (14, 7, 7), (20, 10, 5.5)):
-        c.ell(cx, cy, r, r * 0.9, (30, 150, 50), out=(8, 70, 30))
-    for cx, cy in ((6, 8), (13, 5), (19, 9), (10, 10)):
-        c.ell(cx, cy, 1.3, 1.3, (250, 90, 150), out=None)
     return run_sprite(c.done())
 
 
@@ -626,132 +554,246 @@ def lamp_frames():
 
 
 # ----------------------------------------------------------------------------------- terrain tiles
+
+
+def spring_frames(top):
+    out = []
+    for h in (14, 7):
+        c = C(28, 16)
+        c.rect(2, 13, 26, 16, (128, 128, 160))
+        n = 3
+        for i in range(n):
+            y1 = 13 - i * (h - 4) / n
+            y2 = 13 - (i + 1) * (h - 4) / n
+            ym = (y1 + y2) / 2
+            c.line((6, y1), (22, ym), 2.0, (224, 224, 224))
+            c.line((22, ym), (6, y2), 2.0, (160, 160, 192))
+        c.rect(1, 16 - h - 1, 27, 16 - h + 3, top)
+        out.append(run_sprite(c.done()))
+    return out
+
+
+def item_icon(kind):
+    c = C(14, 14)
+    if kind == "ring":
+        c.ell(7, 7, 5.5, 5.5, GOLD, out=GOLDD)
+        c.hole(7, 7, 2.8, 2.8)
+    elif kind == "shield":
+        c.ell(7, 7, 6, 6, (32, 96, 224), out=(160, 192, 224))
+        c.ell(5.4, 5, 1.6, 1.6, WH, out=None)
+    elif kind == "shoes":
+        c.ell(7, 8.5, 5.5, 3.2, RD, out=OUT)
+        c.rect(5, 5.5, 7, 9, WH, out=None)
+        c.poly([(1, 4), (6, 2), (5, 6)], WH, out=(160, 192, 224), ow=0.4)
+    elif kind == "invinc":
+        c.poly([(7, 0.5), (8.7, 5.3), (13.5, 7), (8.7, 8.7), (7, 13.5), (5.3, 8.7), (0.5, 7), (5.3, 5.3)],
+               (224, 224, 128), out=(224, 96, 128), ow=0.5)
+    else:
+        return head_icon(14)
+    return down(c.im, 14, 14)
+
+
+ITEMS = ("ring", "shield", "shoes", "invinc", "life")
+
+
+def monitor_frames():
+    out = {}
+    for kind in ITEMS:
+        fr = []
+        icon = item_icon(kind)
+        for lit in (0, 1):
+            c = C(32, 32)
+            c.rect(1, 2, 31, 30, (160, 160, 192), out=(32, 32, 96))
+            c.rect(3.5, 4.5, 28.5, 24.5, (0, 0, 0), out=(96, 96, 128))
+            c.rect(2, 26, 30, 31, (96, 96, 128), out=None)
+            im = down(c.im, 32, 32)
+            px = im.load()
+            for y in range(6, 24):
+                for x in range(5, 27):
+                    if (y + x * 0 + lit) % 4 == 0:
+                        px[x, y] = (32, 32, 160, 255)
+            im.paste(icon, (9, 8), icon)
+            fr.append(run_sprite(im))
+        out[kind] = fr
+    c = C(32, 32)
+    c.rect(1, 2, 31, 30, (128, 128, 160), out=(32, 32, 96))
+    c.rect(3.5, 4.5, 28.5, 24.5, (32, 32, 32), out=(64, 64, 96))
+    c.rect(2, 26, 30, 31, (96, 96, 128), out=None)
+    out["broken"] = run_sprite(c.done())
+    out["icons"] = {k: run_sprite(item_icon(k)) for k in ITEMS}
+    return out
+
+
+def sign_frames():
+    out = []
+    for kind, w in (("evil", 30), ("edge", 5), ("back", 30), ("edge", 5), ("goal", 30)):
+        c = C(32, 48)
+        c.rect(14.5, 20, 17.5, 47, (160, 160, 192))
+        c.ell(16, 46, 5, 2.4, (96, 96, 128))
+        x0, x1 = 16 - w / 2, 16 + w / 2
+        if kind == "edge":
+            c.rect(x0, 1, x1, 22, (224, 224, 224))
+        else:
+            col = {"evil": (224, 224, 224), "back": (160, 160, 192), "goal": (32, 64, 224)}[kind]
+            c.rect(x0, 1, x1, 22, col, out=(224, 96, 0), ow=1.2)
+            if kind == "evil":
+                c.ell(16, 11.5, 8.5, 8, SK)
+                for sx in (-3.4, 3.4):
+                    c.ell(16 + sx, 9, 2.8, 2.8, (160, 160, 192))
+                    c.ell(16 + sx, 9, 1.1, 1.1, OUT, out=None)
+                c.poly([(7, 13), (16, 11.5), (25, 13), (22, 17), (16, 14.5), (10, 17)], (160, 64, 0), out=OUT, ow=0.4)
+            elif kind == "back":
+                for rx in (x0 + 3, x1 - 3):
+                    for ry in (4, 19):
+                        c.ell(rx, ry, 1, 1, (96, 96, 128), out=None)
+            else:
+                for s in (-1, 1):
+                    c.poly([(16 + s * 4, 4), (16 + s * 11, 7), (16 + s * 5, 10)], BLL, out=OUT, ow=0.4)
+                c.ell(16, 12, 8, 8, BL, out=OUT, ow=0.5)
+                c.ell(19, 14.5, 5, 3.6, SK, out=None)
+                c.ell(18.5, 9.5, 3, 3.6, WH, out=OUT, ow=0.4)
+                c.ell(19.5, 9.8, 1.2, 1.8, GRN, out=None)
+        out.append(run_sprite(c.done()))
+    return out
+
+
+def puff_frames():
+    out = []
+    for r in (2, 3, 4):
+        c = C(10, 10)
+        c.ell(5, 5, r, r, (192, 192, 192), out=None)
+        c.ell(4, 4, max(1, r - 2), max(1, r - 2), (224, 224, 224), out=None)
+        out.append(run_sprite(c.done()))
+    return out
+
+
+def caterkiller_frames():
+    out = []
+    for f in range(2):
+        c = C(40, 22)
+        for i in range(4):
+            x = 8 + i * 8.5
+            y = 14 - (2.2 if (i + f) % 2 else 0)
+            c.poly([(x - 2, y - 4), (x, y - 9), (x + 2, y - 4)], (224, 224, 160), out=OUT, ow=0.4)
+            c.ell(x, y, 5.2, 5.2, (160, 32, 160))
+            c.ell(x - 1.4, y - 1.6, 1.7, 1.7, (224, 128, 224), out=None)
+        c.ell(37, 13, 4.6, 4.6, (224, 192, 0))
+        c.ell(36, 11.5, 1.4, 1.4, WH, out=OUT, ow=0.3)
+        c.ell(36.4, 11.7, 0.6, 0.6, OUT, out=None)
+        out.append(c.done())
+    return out
+
+
+def roller_frames():
+    out = []
+    for f in range(2):
+        c = C(28, 24)
+        c.ell(14, 13, 10.5, 10.5, (32, 96, 224))
+        for k in range(4):
+            a = f * 0.8 + k * math.pi / 2
+            c.line((14 + 3 * math.cos(a), 13 + 3 * math.sin(a)), (14 + 9 * math.cos(a), 13 + 9 * math.sin(a)), 1.6, (160, 192, 224), out=None)
+        c.ell(14, 13, 3, 3, (224, 32, 0), out=OUT, ow=0.4)
+        c.ell(6, 9, 3.4, 3.4, (224, 224, 224))
+        c.ell(5.3, 9, 1.2, 1.2, OUT, out=None)
+        out.append(c.done())
+    return out
+
+
+def chopper_frames():
+    out = []
+    for f in range(2):
+        c = C(18, 26)
+        c.poly([(9, 24), (3, 17), (15, 17)], (224, 32, 0))
+        c.ell(9, 12, 6.5, 9, (224, 32, 0))
+        c.ell(9, 15, 4.2, 5, (224, 160, 96), out=None)
+        c.ell(7, 6.5, 2.4, 2.4, WH, out=OUT, ow=0.4)
+        c.ell(6.6, 6.7, 1, 1, OUT, out=None)
+        my = 3 if f == 0 else 1
+        c.poly([(3, my + 3), (9, 0.5 + my), (15, my + 3), (13, my + 5.5), (9, my + 4), (5, my + 5.5)], (224, 224, 224), out=OUT, ow=0.5)
+        c.poly([(1, 18), (4, 15), (5, 21)], (160, 0, 0), out=OUT, ow=0.4)
+        c.poly([(17, 18), (14, 15), (13, 21)], (160, 0, 0), out=OUT, ow=0.4)
+        out.append(run_sprite(c.done()))
+    return out
+
+
+# ------------------------------------------------------------------------------------------- decor
+def palm_sprite(trunk, f, seed):
+    # Drawn pixel by pixel with hard edges, like the original's palms: a segmented orange trunk and angular fronds.
+    W = 112
+    top = 58
+    h = trunk + top
+    im = Image.new("RGBA", (W, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    cx = 56
+    for y in range(h - 1, top, -1):
+        t = (h - y) / trunk
+        x = cx + int(round(3 * math.sin(t * 1.6 + seed)))
+        d.line([(x - 3, y), (x + 3, y)], fill=(224, 128, 0))
+        d.point((x - 3, y), fill=(224, 192, 64))
+        d.point((x + 3, y), fill=(128, 64, 0))
+        d.point((x + 2, y), fill=(160, 96, 0))
+        if y % 8 == 0:
+            d.line([(x - 3, y), (x + 3, y)], fill=(96, 32, 0))
+        elif y % 8 == 1:
+            d.line([(x - 1, y), (x + 1, y)], fill=(0, 160, 0))
+    kx, ky = cx + int(round(3 * math.sin(trunk / trunk * 1.6 + seed))), top
+    d.ellipse([kx - 7, ky - 6, kx + 7, ky + 6], fill=(128, 64, 0), outline=(32, 0, 0))
+    for i in range(-6, 7, 3):
+        d.line([(kx + i, ky - 5), (kx + i + 2, ky + 5)], fill=(96, 32, 0))
+    sway = 3 * (f * 2 - 1)
+    for deg, ln in ((185, 46), (212, 52), (242, 46), (298, 46), (328, 52), (355, 46), (155, 30), (25, 30)):
+        a = math.radians(deg)
+        dx, dy = math.cos(a), math.sin(a)
+        side = 1 if dx > 0 else -1
+        tipx = kx + ln * dx + sway * side * 0.6
+        tipy = ky + ln * dy * 0.45 + 24 + sway * 0.3
+        mx, my = kx + ln * 0.5 * dx, ky + ln * 0.5 * dy * 0.8 - 11
+        lx, ly = kx + ln * 0.55 * dx, ky + ln * 0.55 * dy * 0.6 + 9
+        d.polygon([(kx, ky), (mx, my), (tipx, tipy), (lx, ly)], fill=(64, 160, 0))
+        d.polygon([(kx, ky), (lx, ly), (tipx, tipy)], fill=(0, 96, 0))
+        d.line([(kx, ky), (mx, my), (tipx, tipy)], fill=(128, 224, 0))
+        d.line([(mx, my + 1), (tipx, tipy)], fill=(224, 224, 224))
+    return run_sprite(im)
+
+
+def flower_sprite():
+    im = Image.new("RGBA", (40, 44), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    d.rectangle([19, 18, 21, 43], fill=(0, 128, 0))
+    for s in (-1, 1):
+        for k, (ln, hh) in enumerate(((16, 8), (11, 14))):
+            d.polygon([(20, 43 - k * 4), (20 + s * ln, 43 - hh - k * 6), (20 + s * 2, 38 - k * 4)], fill=(64, 160, 0), outline=(0, 96, 0))
+    d.ellipse([9, 2, 31, 24], fill=(128, 96, 224), outline=(96, 64, 192))
+    d.ellipse([12, 5, 28, 21], fill=(160, 128, 224))
+    d.ellipse([16, 9, 24, 17], fill=(128, 224, 0), outline=(0, 128, 0))
+    return run_sprite(im)
+
+
+def sunflower_frames():
+    out = []
+    for f in range(2):
+        im = Image.new("RGBA", (34, 50), (0, 0, 0, 0))
+        d = ImageDraw.Draw(im)
+        d.rectangle([16, 26, 18, 49], fill=(0, 128, 0))
+        for s in (-1, 1):
+            d.polygon([(17, 46), (17 + s * 14, 40), (17 + s * 2, 40)], fill=(64, 160, 0), outline=(0, 96, 0))
+        for k in range(12):
+            a = k * math.pi / 6 + f * 0.26
+            pts = [(17 + 8 * math.cos(a - 0.25), 16 + 8 * math.sin(a - 0.25)), (17 + 16 * math.cos(a), 16 + 16 * math.sin(a)),
+                   (17 + 8 * math.cos(a + 0.25), 16 + 8 * math.sin(a + 0.25))]
+            d.polygon(pts, fill=(224, 224, 0), outline=(224, 128, 0))
+        d.ellipse([9, 8, 25, 24], fill=(0, 96, 0), outline=(0, 64, 0))
+        d.ellipse([12, 11, 19, 18], fill=(64, 128, 0))
+        out.append(run_sprite(im))
+    return out
+
+
 def hsh(a, b):
     return ((a * 73856093) ^ (b * 19349663) ^ (a * b * 83492791)) & 0xFFFF
 
 
 def mix(a, b, t):
     return tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
-
-
-def texel_ghz(wx, wy, d):
-    if d < 0:
-        return None
-    edge = 6 + (0, 1, 2, 1)[(wx // 2) % 4]
-    if d < edge:
-        if d == 0:
-            return (120, 236, 70)
-        if d == 1:
-            return (70, 200, 40)
-        if d < edge - 1:
-            return (30, 156, 36) if (wx + d) % 7 else (60, 184, 50)
-        return (14, 96, 30)
-    cell = ((wx // 16) + (wy // 16)) % 2
-    c = (216, 128, 48) if cell else (146, 78, 30)
-    lx, ly = wx % 16, wy % 16
-    if lx == 0 or ly == 0:
-        c = mix(c, (250, 190, 100), 0.45)
-    elif lx == 15 or ly == 15:
-        c = mix(c, (70, 30, 10), 0.4)
-    if hsh(wx, wy) % 29 == 0:
-        c = mix(c, (60, 28, 10), 0.5)
-    return c
-
-
-def texel_mz(wx, wy, d):
-    if d < 0:
-        return None
-    edge = 3 + (wx // 3) % 2
-    if d < edge:
-        return (60, 190, 70) if d < 1 else (28, 128, 50)
-    row = wy // 8
-    xo = wx + (8 if row % 2 else 0)
-    bx, by = xo % 16, wy % 8
-    pal = ((128, 76, 176), (104, 58, 150), (146, 92, 196), (88, 46, 132))
-    c = pal[hsh(xo // 16, row) % 4]
-    if bx == 0 or by == 0:
-        c = (34, 16, 56)
-    elif bx == 1 or by == 1:
-        c = mix(c, (200, 160, 240), 0.35)
-    elif bx == 15 or by == 7:
-        c = mix(c, (30, 10, 50), 0.35)
-    return c
-
-
-def texel_syz(wx, wy, d):
-    if d < 0:
-        return None
-    if d < 2:
-        return (190, 240, 255) if d == 0 else (110, 190, 230)
-    if d < 4:
-        return (60, 90, 170)
-    cell = ((wx // 16) + (wy // 16)) % 2
-    c = (52, 66, 130) if cell else (38, 48, 104)
-    lx, ly = wx % 16, wy % 16
-    if lx == 0 or ly == 0:
-        c = mix(c, (130, 150, 230), 0.4)
-    elif lx == 15 or ly == 15:
-        c = mix(c, (10, 14, 50), 0.5)
-    if lx in (7, 8) and ly in (7, 8):
-        c = (255, 226, 100) if cell else (255, 140, 200)
-    return c
-
-
-def texel_lava(wx, wy, d):
-    if d < 0:
-        return None
-    v = math.sin(2 * math.pi * wx / 32 + (wy % 16) * 0.8) + math.sin(2 * math.pi * wx / 16 - (wy % 16) * 0.4)
-    t = max(0.0, min(1.0, 0.5 + v * 0.25))
-    c = mix((200, 30, 10), (255, 190, 40), t)
-    if d == 0:
-        c = (255, 240, 130)
-    return c
-
-
-TEXELS = {"ghz": texel_ghz, "mz": texel_mz, "syz": texel_syz}
-LAVA_Y = 320
-
-
-def tile_image(fn, px, base, a, d, lava=False):
-    im = Image.new("RGB", (16, 32))
-    pxl = im.load()
-    for k in range(16):
-        surf = a + int(d * k / 16)
-        for r in range(32):
-            wx, wy = px * 16 + k, base + r
-            col = fn(wx, wy, r - surf)
-            pxl[k, r] = col if col else fn(wx, wy, 99)
-    return img_rows(im)
-
-
-def zone_tiles(name):
-    fn = TEXELS[name]
-    tiles = {}
-    for px in (0, 1):
-        for py in (0, 1):
-            base = py * 16
-            for ph in (0, 4, 8, 12):
-                for d in (-8, -4, 0, 4, 8):
-                    a = ph if d >= 0 else ph - d
-                    tiles[(px, py, ph, d)] = tile_image(fn, px, base, a, d)
-        tiles[("lava", px)] = tile_image(texel_lava, px, LAVA_Y, 0, 0)
-    fill = []
-    for wy in range(32):
-        im = Image.new("RGB", (32, 1))
-        for wx in range(32):
-            im.putpixel((wx, 0), fn(wx, wy, 99))
-        fill.append(img_rows(im)[0])
-    lava_fill = []
-    for wy in range(32):
-        im = Image.new("RGB", (32, 1))
-        for wx in range(32):
-            im.putpixel((wx, 0), texel_lava(wx, wy, 99))
-        lava_fill.append(img_rows(im)[0])
-    return {"tiles": tiles, "fill": fill, "lava_fill": lava_fill}
-
-
-# ------------------------------------------------------------------------------------- backgrounds
-BG_ROWS = 204
 
 
 def grad(stops, r):
@@ -787,145 +829,282 @@ def make_layer(r0, r1, P, factor, colour_fn, draw_fn=None, frames=1, wave=False)
     return spec
 
 
-def cloud(d, x, y, s, col=(252, 252, 255), sh=(196, 222, 250)):
-    for dx, dy, rx, ry in ((0, 0, 9, 4), (8, -3, 8, 5), (16, 0, 10, 4), (-6, 1, 6, 3), (24, 1, 6, 3)):
-        d.ellipse([x + (dx - rx) * s, y + (dy - ry) * s + 2, x + (dx + rx) * s, y + (dy + ry) * s + 2], fill=sh)
-    for dx, dy, rx, ry in ((0, 0, 9, 4), (8, -3, 8, 5), (16, 0, 10, 4), (-6, 1, 6, 3), (24, 1, 6, 3)):
-        d.ellipse([x + (dx - rx) * s, y + (dy - ry) * s, x + (dx + rx) * s, y + (dy + ry) * s], fill=col)
+# ----------------------------------------------------------------------------------- terrain tiles
+TILE_ROWS = 64
+RAG = (2, 3, 1, 4, 2, 0, 3, 1, 4, 2, 3, 0, 1, 4, 2, 3)
+
+
+def texel_ghz(wx, wy, d):
+    # Grass strip with a ragged lower edge, a shadowed band of dark checker squares, then the orange checkered earth.
+    if d < 0:
+        return None
+    g = 11 + RAG[wx % 16]
+    if d < g:
+        if d == 0:
+            return (128, 224, 0)
+        if d >= g - 2:
+            return (0, 96, 0)
+        if (wx * 3 + d * 5) % 7 == 0:
+            return (128, 224, 0)
+        if (wx + d) % 5 == 0:
+            return (0, 128, 0)
+        return (64, 160, 0)
+    cell = ((wx // 16) + (wy // 16)) % 2
+    lx, ly = wx % 16, wy % 16
+    if d < 31:
+        c = (96, 32, 0) if cell else (32, 0, 0)
+        if lx == 0 or ly == 0:
+            c = (128, 64, 0) if cell else (64, 32, 0)
+        return c
+    c = (192, 96, 0) if cell else (128, 64, 0)
+    if lx == 15 or ly == 15:
+        c = (96, 32, 0)
+    elif lx == 0 or ly == 0:
+        c = (224, 160, 32) if cell else (160, 96, 0)
+    elif hsh(wx, wy) % 19 == 0:
+        c = (128, 64, 0) if cell else (96, 32, 0)
+    return c
+
+
+def texel_mz(wx, wy, d):
+    if d < 0:
+        return None
+    g = 4 + (wx // 3) % 2
+    if d < g:
+        return (64, 192, 0) if d < 1 else (0, 128, 0)
+    bx, by = wx % 32, wy % 32
+    blk = hsh(wx // 32, wy // 32) % 3
+    c = ((128, 64, 192), (96, 32, 160), (160, 96, 224))[blk]
+    if bx < 2 or by < 2:
+        c = (192, 128, 224)
+    elif bx > 29 or by > 29:
+        c = (64, 0, 96)
+    elif (bx + by * 2) % 23 == 0:
+        c = (64, 0, 128)
+    return c
+
+
+def texel_syz(wx, wy, d):
+    if d < 0:
+        return None
+    if d < 2:
+        return (224, 224, 160) if d == 0 else (192, 160, 64)
+    cell = ((wx // 16) + (wy // 16)) % 2
+    lx, ly = wx % 16, wy % 16
+    c = (160, 128, 64) if cell else (128, 96, 32)
+    if lx == 0 or ly == 0:
+        c = (224, 192, 96)
+    elif lx == 15 or ly == 15:
+        c = (64, 32, 0)
+    if (lx - 8) ** 2 + (ly - 8) ** 2 < 10:
+        c = (0, 160, 224) if cell else (0, 192, 96)
+    return c
+
+
+def texel_lava(wx, wy, d):
+    if d < 0:
+        return None
+    v = math.sin(2 * math.pi * wx / 32 + (wy % 16) * 0.8) + math.sin(2 * math.pi * wx / 16 - (wy % 16) * 0.4)
+    t = max(0.0, min(1.0, 0.5 + v * 0.25))
+    c = mix((192, 32, 0), (224, 192, 32), t)
+    return (224, 224, 128) if d == 0 else c
+
+
+TEXELS = {"ghz": texel_ghz, "mz": texel_mz, "syz": texel_syz}
+LAVA_Y = 320
+
+
+def tile_image(fn, px, base, a, d):
+    im = Image.new("RGB", (16, TILE_ROWS))
+    pxl = im.load()
+    for k in range(16):
+        surf = a + int(d * k / 16)
+        for r in range(TILE_ROWS):
+            wx, wy = px * 16 + k, base + r
+            col = fn(wx, wy, r - surf)
+            pxl[k, r] = col if col else fn(wx, wy, 99)
+    return img_rows(im)
+
+
+def zone_tiles(name):
+    fn = TEXELS[name]
+    tiles = {}
+    for px in (0, 1):
+        for py in (0, 1):
+            base = py * 16
+            for ph in (0, 4, 8, 12):
+                for d in (-8, -4, 0, 4, 8):
+                    a = ph if d >= 0 else ph - d
+                    tiles[(px, py, ph, d)] = tile_image(fn, px, base, a, d)
+        tiles[("lava", px)] = tile_image(texel_lava, px, LAVA_Y, 0, 0)
+
+    def fill_rows(f):
+        rows = []
+        for wy in range(32):
+            im = Image.new("RGB", (32, 1))
+            for wx in range(32):
+                im.putpixel((wx, 0), f(wx, wy, 99))
+            rows.append(img_rows(im)[0])
+        return rows
+    return {"tiles": tiles, "fill": fill_rows(fn), "lava_fill": fill_rows(texel_lava)}
+
+
+# ------------------------------------------------------------------------------------- backgrounds
+BG_ROWS = 240
+SKYB = (32, 0, 160)
+
+
+def const(c):
+    return lambda r: c
+
+
+def cloud(d, x, y, s):
+    shapes = ((0, 0, 10, 5), (11, -3, 9, 6), (22, 0, 11, 5), (-8, 2, 7, 3), (32, 2, 7, 3))
+    for dx, dy, rx, ry in shapes:
+        d.ellipse([x + (dx - rx) * s, y + (dy - ry) * s + 3, x + (dx + rx) * s, y + (dy + ry) * s + 3], fill=(96, 128, 224))
+    for dx, dy, rx, ry in shapes:
+        d.ellipse([x + (dx - rx) * s, y + (dy - ry) * s + 1, x + (dx + rx) * s, y + (dy + ry) * s + 1], fill=(160, 192, 224))
+    for dx, dy, rx, ry in shapes:
+        d.ellipse([x + (dx - rx) * s, y + (dy - ry) * s - 1, x + (dx + rx) * s - 2, y + (dy + ry) * s - 2], fill=(224, 224, 224))
+
+
+def ripples(seed, density, longest):
+    def fn(d, dx, r0, f):
+        rr = random.Random(seed)
+        for _ in range(density):
+            x, y = rr.randrange(0, 512), rr.randrange(0, 60)
+            n = rr.randrange(2, longest)
+            d.line([(x + dx, y), (x + dx + n, y)], fill=(160, 192, 224) if rr.random() < 0.4 else (96, 128, 224))
+        for _ in range(density):
+            d.point((rr.randrange(0, 512) + dx, rr.randrange(0, 60)), fill=(32, 64, 192))
+    return fn
 
 
 def bg_ghz():
-    rnd = random.Random(11)
-    sky = [(0, (30, 110, 228)), (50, (110, 190, 250)), (80, (170, 226, 252))]
-    sk = lambda r: grad(sky, r)
-    spec = []
-    spec += make_layer(0, 8, 320, 0, sk)
+    cr = random.Random(11)
+    spec = make_layer(0, 3, 320, 0, const(SKYB))
 
-    def clouds(n, y0, s):
-        pos = [(rnd.randrange(0, 400), y0 + rnd.randrange(-1, 3)) for _ in range(n)]
+    def clouds(n, y0, s, P):
+        pos = [(cr.randrange(0, P), y0 + cr.randrange(-2, 3)) for _ in range(n)]
         return lambda d, dx, r0, f: [cloud(d, x + dx, y - r0, s) for x, y in pos]
-    spec += make_layer(8, 20, 400, 0.05, sk, clouds(4, 14, 0.9))
-    spec += make_layer(20, 32, 320, 0.1, sk, clouds(4, 26, 0.8))
-    spec += make_layer(32, 44, 288, 0.17, sk, clouds(3, 38, 0.7))
-    spec += make_layer(44, 48, 320, 0, sk)
-    mts = []
-    x = 0
-    while x < 384:
-        w = rnd.randrange(50, 90)
-        mts.append((x, w, rnd.randrange(20, 34)))
-        x += w - 14
-
-    def mount(d, dx, r0, f):
-        for x, w, hgt in mts:
-            xs = x + dx
-            d.polygon([(xs, 76 - r0), (xs + w // 2, 76 - hgt - r0), (xs + w, 76 - r0)], fill=(112, 134, 200))
-            d.polygon([(xs + w // 2, 76 - hgt - r0), (xs + w, 76 - r0), (xs + w * 0.62, 76 - r0)], fill=(88, 108, 176))
-            d.polygon([(xs + w // 2 - 4, 76 - hgt + 5 - r0), (xs + w // 2, 76 - hgt - r0), (xs + w // 2 + 4, 76 - hgt + 5 - r0)],
-                      fill=(240, 246, 255))
-    spec += make_layer(48, 76, 384, 0.2, sk, mount)
-    sea = lambda r: mix((50, 120, 220), (24, 80, 190), (r - 76) / 20)
-
-    def waves(seed):
-        wr = random.Random(seed)
-        pts = [(wr.randrange(0, 256), wr.randrange(0, 6)) for _ in range(40)]
-        return lambda d, dx, r0, f: [d.line([(x + dx, y), (x + dx + wr.randrange(5, 10), y)], fill=(170, 220, 255)) for x, y in pts]
-    spec += make_layer(76, 82, 256, 0.28, sea, waves(1), wave=True)
-    spec += make_layer(82, 88, 256, 0.34, sea, waves(2), wave=True)
-    spec += make_layer(88, 94, 256, 0.42, sea, waves(3), wave=True)
-    hill = lambda r: mix((70, 170, 70), (40, 130, 56), (r - 94) / 40)
+    spec += make_layer(3, 20, 384, 0.06, const(SKYB), clouds(4, 12, 1.0, 384))
+    spec += make_layer(20, 36, 320, 0.12, const(SKYB), clouds(4, 28, 0.8, 320))
+    spec += make_layer(36, 56, 288, 0.2, const(SKYB), clouds(3, 46, 0.7, 288))
+    spec += make_layer(56, 62, 320, 0, const(SKYB))
+    sr = random.Random(5)
+    spikes, x = [], 0
+    while x < 512:
+        spikes.append((x, sr.randrange(12, 40)))
+        x += sr.randrange(7, 13)
 
     def hills(d, dx, r0, f):
-        for cx, rr in ((40, 26), (120, 34), (200, 24), (290, 36), (370, 28), (450, 30)):
-            d.ellipse([cx - rr * 1.4 + dx, 112 - rr - r0 + 6, cx + rr * 1.4 + dx, 112 + rr * 2 - r0], fill=(52, 150, 62))
-            d.ellipse([cx - rr * 1.4 + dx + 4, 112 - rr - r0 + 8, cx + rr * 0.2 + dx, 112 + rr * 2 - r0], fill=(70, 172, 76))
-        for wx in (96, 292):
-            d.rectangle([wx + dx, 100 - r0, wx + 9 + dx, 134 - r0], fill=(220, 236, 250))
-            for yy in range(100, 134):
-                if (yy + 2 * f) % 5 < 2:
-                    d.line([(wx + 1 + dx, yy - r0), (wx + 8 + dx, yy - r0)], fill=(120, 190, 250))
-                for sx in (2, 5, 7):
-                    if (yy * 3 + sx * 5 + f * 3) % 7 == 0:
-                        d.point((wx + sx + dx, yy - r0), fill=(255, 255, 255))
-            d.ellipse([wx - 4 + dx, 131 - r0, wx + 13 + dx, 138 - r0], fill=(220, 240, 255))
-    spec += make_layer(94, 134, 448, 0.55, hill, hills, frames=3)
-    bush = lambda r: mix((34, 126, 44), (20, 92, 36), (r - 134) / 30)
+        base = 100 - r0
+        d.rectangle([dx, base - 6, dx + 512, base + 2], fill=(32, 0, 0))
+        for x, hgt in spikes:
+            top = base - hgt
+            d.polygon([(x - 7 + dx, base), (x - 1 + dx, top + 4), (x + dx, top), (x + 1 + dx, top + 4), (x + 7 + dx, base)], fill=(32, 0, 0))
+            d.line([(x + 2 + dx, top + 6), (x + 2 + dx, base)], fill=(96, 32, 0))
+            d.line([(x - 3 + dx, top + 14), (x - 3 + dx, base)], fill=(64, 32, 0))
+            d.point((x + dx, top + 1), fill=(128, 64, 0))
+    spec += make_layer(62, 100, 512, 0.28, const(SKYB), hills)
+    br = random.Random(9)
+    clumps = [(x + br.randrange(-3, 4), br.randrange(-3, 4), br.randrange(8, 12)) for x in range(0, 384, 17)]
+    clumps2 = [(x + 8 + br.randrange(-3, 4), br.randrange(4, 9), br.randrange(7, 10)) for x in range(0, 384, 17)]
 
     def bushes(d, dx, r0, f):
-        br = random.Random(5)
-        for x in range(0, 256, 18):
-            rr = br.randrange(8, 15)
-            d.ellipse([x + dx, 140 - rr - r0, x + 24 + dx, 140 + rr * 2 - r0], fill=(26, 112, 40))
-            d.ellipse([x + dx + 3, 142 - rr - r0, x + 12 + dx, 150 - r0], fill=(52, 156, 60))
-    spec += make_layer(134, 168, 256, 0.75, bush, bushes)
-    spec += make_layer(168, BG_ROWS, 320, 0, lambda r: mix((110, 64, 24), (60, 30, 12), (r - 168) / 36))
+        for row in (clumps, clumps2):
+            for cx, oy, r in row:
+                cy = (116 if row is clumps else 126) + oy - r0
+                x = cx + dx
+                d.ellipse([x - r - 1, cy - r - 1, x + r + 1, cy + r + 1], fill=(0, 64, 0))
+                d.ellipse([x - r, cy - r, x + r, cy + r], fill=(0, 96, 0))
+                d.ellipse([x - r + 2, cy - r + 1, x + r - 3, cy + r - 4], fill=(64, 160, 0))
+                for k in range(5):
+                    d.point((x - r // 2 + k * 2, cy - r // 2 + (k * 3) % 5), fill=(128, 224, 0))
+                d.ellipse([x - 3, cy - r + 2, x + 1, cy - r + 5], fill=(128, 224, 0))
+        for wx in (250,):
+            for y in range(112 - r0, 140 - r0):
+                for xx in range(wx, wx + 30):
+                    c = (160, 192, 224) if (xx + y + f * 2) % 2 == 0 else (96, 128, 224)
+                    if (y + f) % 5 == 0:
+                        c = (224, 224, 224)
+                    d.point((xx + dx, y), fill=c)
+        d.rectangle([dx, 138 - r0, dx + 384, 141 - r0], fill=(96, 32, 0))
+        d.rectangle([dx, 141 - r0, dx + 384, 142 - r0], fill=(32, 0, 0))
+    spec += make_layer(100, 143, 384, 0.42, const((32, 0, 0)), bushes, frames=3)
+    water = const((0, 128, 224))
+    spec += make_layer(143, 152, 256, 0.5, water, ripples(1, 20, 7), wave=True)
+    spec += make_layer(152, 163, 256, 0.56, water, ripples(2, 26, 9), wave=True)
+    spec += make_layer(163, 176, 256, 0.64, water, ripples(3, 30, 11), wave=True)
+    spec += make_layer(176, 192, 256, 0.74, water, ripples(4, 36, 13), wave=True)
+    spec += make_layer(192, 214, 256, 0.86, water, ripples(5, 44, 15), wave=True)
+    spec += make_layer(214, BG_ROWS, 256, 1.0, water, ripples(6, 50, 16), wave=True)
     return spec
 
 
 def bg_mz():
-    rnd = random.Random(23)
-    sky = [(0, (14, 8, 40)), (70, (66, 24, 78)), (130, (120, 40, 70))]
+    sky = [(0, (0, 0, 32)), (90, (64, 0, 64)), (160, (128, 32, 64))]
     sk = lambda r: grad(sky, r)
-    spec = make_layer(0, 24, 320, 0, sk)
+    spec = make_layer(0, 30, 320, 0, sk)
 
     def smoke(d, dx, r0, f):
-        for x in range(0, 320, 53):
-            cloud(d, x + dx, 20 - r0 + rnd.randrange(-3, 3), 0.8, col=(70, 36, 90), sh=(50, 24, 72))
-    spec += make_layer(24, 46, 360, 0.06, sk, smoke)
+        for x in range(0, 360, 61):
+            cloud(d, x + dx, 24 - r0, 0.8)
+    spec += make_layer(30, 56, 360, 0.06, sk, smoke)
 
     def pillars(d, dx, r0, f):
-        for x, w in ((20, 14), (84, 20), (150, 12), (210, 18), (280, 14)):
-            d.rectangle([x + dx, 52 - r0, x + w + dx, 130 - r0], fill=(52, 28, 84))
-            d.rectangle([x - 3 + dx, 48 - r0, x + w + 3 + dx, 54 - r0], fill=(66, 38, 100))
-            d.rectangle([x + dx, 52 - r0, x + 3 + dx, 130 - r0], fill=(70, 40, 106))
-    spec += make_layer(46, 100, 320, 0.15, sk, pillars)
+        for x, w in ((20, 16), (96, 22), (170, 14), (236, 20), (300, 16)):
+            d.rectangle([x + dx, 64 - r0, x + w + dx, 150 - r0], fill=(64, 0, 96))
+            d.rectangle([x - 3 + dx, 58 - r0, x + w + 3 + dx, 66 - r0], fill=(96, 32, 128))
+            d.rectangle([x + dx, 64 - r0, x + 3 + dx, 150 - r0], fill=(96, 32, 128))
+    spec += make_layer(56, 120, 320, 0.15, sk, pillars)
 
     def arches(d, dx, r0, f):
         for x in range(0, 256, 64):
-            d.rectangle([x + dx, 90 - r0, x + 64 + dx, 134 - r0], fill=(38, 20, 62))
-            d.pieslice([x + 8 + dx, 78 - r0, x + 56 + dx, 126 - r0], 180, 360, fill=(66, 30, 84))
-            d.rectangle([x + 8 + dx, 102 - r0, x + 56 + dx, 134 - r0], fill=(66, 30, 84))
-            d.ellipse([x + 20 + dx, 98 - r0, x + 44 + dx, 122 - r0], fill=(120, 40, 60))
-    spec += make_layer(100, 134, 256, 0.32, sk, arches)
-    glow = lambda r: mix((170, 40, 20), (255, 140, 30), (r - 134) / 26)
+            d.rectangle([x + dx, 110 - r0, x + 64 + dx, 160 - r0], fill=(32, 0, 64))
+            d.pieslice([x + 8 + dx, 96 - r0, x + 56 + dx, 144 - r0], 180, 360, fill=(64, 0, 96))
+            d.rectangle([x + 8 + dx, 120 - r0, x + 56 + dx, 160 - r0], fill=(64, 0, 96))
+            d.ellipse([x + 20 + dx, 116 - r0, x + 44 + dx, 140 - r0], fill=(160, 32, 0))
+    spec += make_layer(120, 160, 256, 0.32, sk, arches)
+    glow = lambda r: mix((160, 32, 0), (224, 128, 0), (r - 160) / 40)
 
-    def lava_bands(seed):
+    def bands(seed):
         wr = random.Random(seed)
-        pts = [(wr.randrange(0, 256), wr.randrange(0, 8)) for _ in range(34)]
-        return lambda d, dx, r0, f: [d.line([(x + dx, y), (x + dx + wr.randrange(5, 12), y)], fill=(255, 224, 90)) for x, y in pts]
-    spec += make_layer(134, 142, 256, 0.45, glow, lava_bands(4), wave=True)
-    spec += make_layer(142, 150, 256, 0.55, glow, lava_bands(5), wave=True)
-    spec += make_layer(150, 160, 256, 0.68, glow, lava_bands(6), wave=True)
+        pts = [(wr.randrange(0, 256), wr.randrange(0, 12)) for _ in range(40)]
+        return lambda d, dx, r0, f: [d.line([(x + dx, y), (x + dx + wr.randrange(5, 12), y)], fill=(224, 224, 64)) for x, y in pts]
+    spec += make_layer(160, 170, 256, 0.45, glow, bands(4), wave=True)
+    spec += make_layer(170, 182, 256, 0.55, glow, bands(5), wave=True)
+    spec += make_layer(182, 196, 256, 0.68, glow, bands(6), wave=True)
 
     def bricks(d, dx, r0, f):
-        for y in range(160, BG_ROWS, 8):
-            d.line([(0, y - r0), (400, y - r0)], fill=(26, 10, 40))
+        for y in range(196, BG_ROWS, 8):
+            d.line([(0, y - r0), (400, y - r0)], fill=(32, 0, 64))
             for x in range(-8 + (y // 8 % 2) * 8, 320, 16):
-                d.line([(x + dx, y - r0), (x + dx, y + 8 - r0)], fill=(26, 10, 40))
-    spec += make_layer(160, BG_ROWS, 320, 0.9, lambda r: (70, 34, 100), bricks)
+                d.line([(x + dx, y - r0), (x + dx, y + 8 - r0)], fill=(32, 0, 64))
+    spec += make_layer(196, BG_ROWS, 320, 0.9, const((96, 32, 128)), bricks)
     return spec
 
 
 def bg_syz():
     rnd = random.Random(31)
-    sky = [(0, (6, 6, 34)), (80, (48, 24, 100)), (140, (110, 50, 140))]
+    sky = [(0, (0, 0, 64)), (90, (64, 32, 128)), (170, (160, 64, 160))]
     sk = lambda r: grad(sky, r)
 
     def stars(d, dx, r0, f):
         sr = random.Random(2)
-        for _ in range(50):
-            x, y = sr.randrange(0, 320), sr.randrange(0, 70)
-            d.point((x + dx, y - r0), fill=(255, 255, 255) if sr.random() < 0.5 else (170, 190, 255))
-        d.ellipse([236 + dx, 14 - r0, 258 + dx, 36 - r0], fill=(250, 244, 200))
-        d.ellipse([242 + dx, 12 - r0, 262 + dx, 32 - r0], fill=sk(20))
-    spec = make_layer(0, 56, 320, 0, sk, stars)
+        for _ in range(60):
+            x, y = sr.randrange(0, 320), sr.randrange(0, 80)
+            d.point((x + dx, y - r0), fill=(224, 224, 224) if sr.random() < 0.5 else (160, 192, 224))
+        d.ellipse([240 + dx, 18 - r0, 264 + dx, 42 - r0], fill=(224, 224, 160))
+        d.ellipse([246 + dx, 16 - r0, 268 + dx, 38 - r0], fill=sk(28))
+    spec = make_layer(0, 66, 320, 0, sk, stars)
 
     def skyline(col, win, top, bot, seed, glowcol):
         sr = random.Random(seed)
-        bs = []
-        x = 0
+        bs, x = [], 0
         while x < 384:
             w = sr.randrange(18, 40)
-            bs.append((x, w, sr.randrange(top, top + 36)))
+            bs.append((x, w, sr.randrange(top, top + 40)))
             x += w + sr.randrange(0, 4)
 
         def fn(d, dx, r0, f):
@@ -937,16 +1116,16 @@ def bg_syz():
                         if sr.random() < 0.42:
                             d.rectangle([wx + dx, wy - r0, wx + 1 + dx, wy + 2 - r0], fill=win)
         return fn
-    spec += make_layer(56, 100, 384, 0.12, sk, skyline((26, 22, 74), (200, 190, 120), 60, 150, 3, (80, 70, 160)))
-    spec += make_layer(100, 140, 320, 0.3, sk, skyline((44, 34, 110), (255, 220, 90), 90, 190, 4, (255, 90, 200)))
+    spec += make_layer(66, 120, 384, 0.12, sk, skyline((32, 32, 96), (224, 192, 96), 72, 170, 3, (96, 64, 160)))
+    spec += make_layer(120, 170, 320, 0.3, sk, skyline((64, 32, 128), (224, 224, 96), 110, 220, 4, (224, 96, 192)))
 
     def bokeh(d, dx, r0, f):
         for x in range(0, 256, 11):
-            y = 143 + rnd.randrange(0, 20)
-            col = rnd.choice(((255, 90, 200), (90, 220, 255), (255, 230, 100), (140, 255, 140)))
+            y = 175 + rnd.randrange(0, 22)
+            col = rnd.choice(((224, 96, 192), (96, 224, 224), (224, 224, 96), (128, 224, 128)))
             d.ellipse([x + dx, y - r0, x + 3 + dx, y + 3 - r0], fill=col)
-    spec += make_layer(140, 170, 256, 0.5, lambda r: mix((50, 30, 110), (20, 14, 60), (r - 140) / 30), bokeh)
-    spec += make_layer(170, BG_ROWS, 320, 0, lambda r: (16, 12, 52))
+    spec += make_layer(170, 204, 256, 0.5, lambda r: mix((64, 32, 128), (32, 0, 64), (r - 170) / 34), bokeh)
+    spec += make_layer(204, BG_ROWS, 320, 0, const((32, 0, 64)))
     return spec
 
 
@@ -954,45 +1133,63 @@ def bg_syz():
 CHARS = " 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ:!+-./X"
 
 
-def make_font(px):
-    f = ImageFont.truetype(MONO, px)
-    l, t, r, b = f.getbbox("0")
-    cw = int(round(f.getlength("0")))
-    chh = int(b - min(t, 0)) + 2
-    cols = {"white": (250, 250, 250), "yellow": (252, 220, 40), "red": (240, 50, 50), "blue": (80, 160, 255)}
-    out = {c: {} for c in cols}
+def make_font(path, px, colours, outline=0, shadow=None):
+    # Glyphs are rendered without anti-aliasing. colours: name -> (fill, edge colour); the edge is either a
+    # 1 px drop shadow (outline == 0) or a full outline of `outline` pixels.
+    f = ImageFont.truetype(path, px)
+    ascent, descent = f.getmetrics()
+    chh = ascent + descent + 2 * outline + 1
+    adv, g = {}, {c: {} for c in colours}
     for ch in CHARS:
-        m = Image.new("L", (cw, chh), 0)
+        a = int(round(f.getlength(ch)))
+        adv[ch] = a + outline
+        w = a + 2 * outline + 2
+        m = Image.new("L", (w, chh), 0)
         d = ImageDraw.Draw(m)
         d.fontmode = "1"
-        d.text((0, 0), ch, font=f, fill=255)
-        for cname, rgb in cols.items():
-            im = Image.new("RGBA", (cw, chh), rgb + (0,))
-            im.putalpha(m)
-            out[cname][ch] = run_sprite(im)
-    return {"cw": cw, "ch": chh, "g": out}
+        d.text((outline, outline), ch, font=f, fill=255)
+        edge = m.copy()
+        if outline:
+            edge = m.filter(ImageFilter.MaxFilter(2 * outline + 1))
+        else:
+            edge = Image.new("L", (w, chh), 0)
+            edge.paste(m, (1, 1))
+        for name, (fill, ecol) in colours.items():
+            im = Image.new("RGBA", (w, chh), (0, 0, 0, 0))
+            im.paste(Image.new("RGBA", (w, chh), ecol + (255,)), (0, 0), edge)
+            im.paste(Image.new("RGBA", (w, chh), fill + (255,)), (0, 0), m)
+            g[name][ch] = run_sprite(im)
+    return {"ch": chh, "adv": adv, "g": g}
 
 
-# ------------------------------------------------------------------------------------------- main
 def main():
     right, left = sonic_sets()
-    mon = monitor_frames()
     data = {
         "sonic": right, "sonic_l": left, "life": life_icon(),
         "ring": ring_frames(), "sparkle": sparkle_frames(),
-        "spring_red": spring_frames((230, 50, 50)), "spring_yel": spring_frames((250, 210, 40)),
-        "spikes": spikes_sprite(), "monitor": mon, "shield": shield_frames(), "sign": sign_frames(),
+        "spring_red": spring_frames((224, 32, 0)), "spring_yel": spring_frames((224, 224, 0)),
+        "spikes": spikes_sprite(), "monitor": monitor_frames(), "shield": shield_frames(), "sign": sign_frames(),
         "bumper": bumper_frames(), "dust": dust_frames(), "shot": shot_frames(), "boom": explosion_frames(),
-        "animal": animal_frames(),
+        "puff": puff_frames(), "animal": animal_frames(),
         "moto": [run_sprite(f) for f in motobug_frames()], "moto_r": [run_sprite(flip(f)) for f in motobug_frames()],
+        "cater": [run_sprite(f) for f in caterkiller_frames()], "cater_r": [run_sprite(flip(f)) for f in caterkiller_frames()],
+        "roller": [run_sprite(f) for f in roller_frames()], "roller_r": [run_sprite(flip(f)) for f in roller_frames()],
         "crab": [run_sprite(f) for f in crab_frames()],
         "buzz": [run_sprite(f) for f in buzz_frames()], "buzz_r": [run_sprite(flip(f)) for f in buzz_frames()],
-        "decor": {"ghz": {"palm": palm_frames(), "totem": [totem_sprite()], "flower": flower_frames(), "bush": [bush_sprite()]},
+        "chopper": chopper_frames(),
+        "decor": {"ghz": {"palm1": [palm_sprite(110, f, 0.3) for f in (0, 1)], "palm2": [palm_sprite(130, f, 1.4) for f in (0, 1)],
+                          "palm3": [palm_sprite(150, f, 2.6) for f in (0, 1)], "flower": [flower_sprite()],
+                          "sunflower": sunflower_frames(), "totem": [totem_sprite()]},
                   "mz": {"column": [column_sprite()], "brazier": brazier_frames()},
                   "syz": {"lamp": lamp_frames()}},
         "zones": {"ghz": zone_tiles("ghz"), "mz": zone_tiles("mz"), "syz": zone_tiles("syz")},
         "bg": {"ghz": bg_ghz(), "mz": bg_mz(), "syz": bg_syz()},
-        "font": {"S": make_font(12), "L": make_font(26)},
+        "font": {
+            "S": make_font(FONT_MONO, 13, {"yellow": ((224, 224, 0), (160, 64, 0)), "white": ((224, 224, 224), (96, 96, 96)),
+                                           "red": ((224, 0, 0), (96, 0, 0))}),
+            "M": make_font(FONT_BIG, 17, {"white": ((224, 224, 224), (0, 0, 96)), "yellow": ((224, 224, 0), (160, 64, 0))}, outline=1),
+            "L": make_font(FONT_BIG, 30, {"white": ((224, 224, 224), (0, 0, 96)), "yellow": ((224, 224, 0), (160, 64, 0))}, outline=2),
+        },
     }
     save_bundle("g_sonic.bin", data)
     print("wrote g_sonic.bin")
@@ -1000,3 +1197,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
