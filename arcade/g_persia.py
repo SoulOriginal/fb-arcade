@@ -5,6 +5,12 @@ import math
 
 B = load_bundle("g_persia.bin")
 SPR, TILES, MISC, HUD, META = B["spr"], B["tiles"], B["misc"], B["hud"], B["meta"]
+# The pull-up used to slide the prince sideways into the ledge's wall face while his body was still below the top
+# edge, so he seemed to pass through the wall. He now hangs a little further out and the sideways motion starts only
+# after the first frames of the rise, so he is level with the top before he moves over it.
+HANG_GAP = 9
+_pu = META["pullup"]
+_pu["dx"] = [0.0, 0.0] + list(_pu["dx"][:-2])
 THEME_DENSITY = {1: .18, 2: .22, 3: .24, 4: .2, 5: .26, 6: .26, 7: .22, 8: .24, 9: .26, 10: .28, 11: .24, 12: .28}
 GUARD_PAL = {1: "g_blue", 2: "g_red", 3: "g_dark", 4: "g_gold", 5: "g_blue", 6: "g_green", 7: "g_red", 8: "g_gold", 9: "g_dark",
              10: "g_blue", 11: "g_red", 12: "g_dark"}
@@ -566,7 +572,7 @@ class Actor:
         gap = (e - self.x) * self.face
         yl = R * TH + FEET
         if -2 <= gap <= 17 and yl + 44 <= self.y <= yl + 66:
-            self.x = e - 7 * self.face
+            self.x = e - HANG_GAP * self.face
             self.y = yl + 3 + HANG_H
             self.row = R
             self.hang_row = R
@@ -1626,7 +1632,8 @@ class Renderer:
                 out.append((("a", id(a)), s, x0, y0))
         for f in g.fx:
             s = f[0]
-            out.append((("fx", id(f)), s, int(f[1]) + s[0] - ox0, int(f[2]) + s[1] - oy0))
+            # the spark sprite is anchored at its own centre: its stored vertical offset is a fighter-sized one
+            out.append((("fx", id(f)), s, int(f[1]) + s[0] - ox0, int(f[2]) - len(s[2]) // 2 - oy0))
         p = g.prince
         if not p.hidden:
             s = p.spr()
