@@ -9,7 +9,7 @@ target (or about nine minutes at most), shows the result and moves on.
 
 | Game | Inspired by |
 |------|-------------|
-| `snake` | Snake with brick walls and a choice of red (grow), blue (shrink) and golden (bonus) apples, solved offline with a dynamic Hamiltonian cycle |
+| `snake` | Snake with a new brick layout every game (bars, posts, corners, crosses, mirrored), a choice of red (grow), blue (shrink) and golden (bonus) apples, solved offline with a dynamic Hamiltonian cycle |
 | `tetris` | Tetris, two-piece lookahead bot |
 | `bomber` | Bomberman |
 | `sonic` | Sonic the Hedgehog: short acts with loops, four characters (hedgehog, fox, echidna, dark hedgehog), scanline parallax |
