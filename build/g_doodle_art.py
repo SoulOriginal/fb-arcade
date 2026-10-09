@@ -117,61 +117,73 @@ def sprite(p):
 
 
 # ---- Doodler ----------------------------------------------------------------------------------------------------------
-DW, DH, FEET, BODYX = 64, 84, 80, 27     # canvas, feet baseline, x of the body centre when facing right
-GREEN = (164, 204, 52)
-GREEN_D = (104, 150, 30)
+DW, DH, FEET, BODYX = 72, 84, 80, 27     # canvas, feet baseline, x of the body centre when facing right
+GREEN = (186, 200, 40)         # olive-yellow body of the original Doodler
+STRIPE = (110, 164, 58)
+DINK = (22, 22, 18)            # the original outlines are near-black and thick
+BX0, BX1, BH = 10, 44, 43      # body is one dome-topped block: head and torso are the same shape
 
 
 def doodler(leg, snout_deg=0, hat=None, pack=None):
     p = Pic(DW, DH)
     bt = FEET - leg                     # body bottom
-    top = bt - 36
-    # legs are drawn first so that the body overlaps their roots
-    for x in (13, 19, 30, 36):
-        bend = (leg < 8) * 5
-        pts = [(x, bt - 3), (x - bend - 1, bt + leg * 0.5), (x + 1, FEET - 2)]
-        p.line(pts, INK, 1.7, 0.1)
-        p.line([(x + 1, FEET - 2), (x + 6, FEET - 0.5)], INK, 1.7, 0.1)
+    top = bt - BH
+    # four thin black legs, evenly spaced, each ending in a small foot that points forward
+    for i, f in enumerate((0.12, 0.38, 0.64, 0.90)):
+        x = BX0 + (BX1 - BX0) * f
+        bend = 2.5 if leg < 8 else 0.0
+        p.line([(x, bt - 2), (x - bend, bt + leg * 0.5), (x, FEET - 1.2)], DINK, 2.3, 0.08)
+        p.line([(x - 0.5, FEET - 1.0), (x + 3.8, FEET - 1.0)], DINK, 2.3, 0.08)
     if pack:
-        p.rrect(-1, bt - 30, 11, bt - 4, 3, (200, 70, 60), INK, 1.4)
-        p.rrect(1, bt - 26, 9, bt - 18, 2, (235, 200, 70), None)
-        p.line([(0, bt - 10), (10, bt - 10)], INK, 1.2)
+        p.rrect(3, bt - 28, 13, bt - 4, 3, (200, 70, 60), DINK, 1.4)
+        p.rrect(5, bt - 24, 11, bt - 16, 2, (235, 200, 70), None)
+        p.line([(3.5, bt - 10), (12.5, bt - 10)], DINK, 1.2)
         fl = 14 if pack == 1 else 22
-        p.poly([(1.5, bt - 4), (9.5, bt - 4), (5.5, bt - 4 + fl)], (255, 150, 30), INK, 1.0)
-        p.poly([(3.5, bt - 4), (7.5, bt - 4), (5.5, bt - 4 + fl * 0.6)], (255, 230, 90), None)
-    body = smooth([(17, top - 7), (29, top + 6), (37, top + 18), (37, bt - 5), (30, bt), (15, bt), (10, bt - 7),
-                   (10, top + 22), (14, top + 6)], 3)
-    p.poly(body, GREEN, INK, 1.7, 0.2)
-    # darker belly stripes, clipped to the body so they never leak over the outline
-    stripes = Pic(DW, DH)
-    for k in range(3):
-        y = bt - 6 - k * 6
-        stripes.line([(8, y + 2), (22, y - 1.5), (40, y + 2)], GREEN_D, 2.2, 0.1)
-    mask = Image.new("L", p.im.size, 0)
-    ImageDraw.Draw(mask).polygon([(x * K, y * K) for x, y in body], fill=255)
-    layer = stripes.im
-    layer.putalpha(ImageChops.darker(layer.getchannel("A"), mask))
-    p.im.alpha_composite(layer)
-    # snout: a tube whose base sits on the head, rotated by snout_deg (0 = forward, -85 = straight up while shooting)
+        p.poly([(5, bt - 4), (11, bt - 4), (8, bt - 4 + fl)], (255, 150, 30), DINK, 1.0)
+        p.poly([(6.5, bt - 4), (9.5, bt - 4), (8, bt - 4 + fl * 0.6)], (255, 230, 90), None)
+    r = 14
+    pts = [(BX0, top + r)]
+    for k in range(1, 8):                       # domed head: both top corners are big arcs, the head leans forward a touch
+        a = math.pi + k * math.pi / 14
+        pts.append((BX0 + r + 1 + (r + 1) * math.cos(a), top + r + (r) * math.sin(a)))
+    for k in range(0, 8):
+        a = -math.pi / 2 + k * math.pi / 14
+        pts.append((BX1 - r + r * math.cos(a), top + r + r * math.sin(a)))
+    pts += [(BX1, bt - 3), (BX1 - 3, bt), (BX0 + 3, bt - 0.5), (BX0 + 0.5, bt - 3)]
+    p.poly(pts, GREEN, DINK, 2.4, 0.18)
+    # belly stripes: a black line on top, then two green bands separated by another black line
+    sz = 18.0
+    y0 = bt - sz
+    for y1, y2 in ((y0 + 1.5, y0 + 7.6), (y0 + 9.6, bt - 1.8)):
+        p.poly([(BX0 + 1.2, y1), (BX1 - 0.8, y1), (BX1 - 0.8, y2), (BX0 + 1.2, y2)], STRIPE, None, 0, 0.0)
+    p.line([(BX0, y0), (BX1, y0)], DINK, 1.7, 0.1)
+    p.line([(BX0, y0 + 8.6), (BX1, y0 + 8.6)], DINK, 1.7, 0.1)
+    # horn-shaped snout flaring into an oval opening; rotated about its base for the shooting pose
     a = math.radians(snout_deg)
-    bx, by = 33.0, top + 14.0
-    ln, wd = 22.0, 4.6
+    sy = top + 17.0
+    bx = BX1 - (4.0 if snout_deg else 0.0)
+    by = sy - (4.0 if snout_deg else 0.0)
     ux, uy, nx, ny = math.cos(a), math.sin(a), -math.sin(a), math.cos(a)
-    tube = [(bx + nx * wd * s + ux * t, by + ny * wd * s + uy * t) for s, t in ((-1, 0), (-1, ln), (1, ln), (1, 0))]
-    p.poly(tube, GREEN, INK, 1.6, 0.12)
-    ex, ey = bx + ux * (ln + 0.5), by + uy * (ln + 0.5)
-    p.blob(ex, ey, wd * 1.05, wd * 1.05, (88, 126, 28), INK, 1.5, 0.1)
-    p.blob(32.5, top + 7.5, 3.6, 4.0, (255, 255, 255), INK, 1.1, 0.05)
-    p.dot(33.8, top + 8.0, 1.6)
-    p.line([(26, top + 11), (30, top + 12.5)], INK, 1.0, 0.05)
+
+    def at(t, w):
+        return (bx + ux * t + nx * w, by + uy * t + ny * w)
+    horn = [at(-1, -5.6), at(8, -4.4), at(15, -4.2), at(20, -6.8), at(21.5, -6.8), at(21.5, 6.8), at(20, 6.8), at(15, 4.2), at(8, 4.4),
+            at(-1, 5.6)]
+    p.poly(horn, GREEN, DINK, 2.4, 0.12)
+    ox, oy = at(21.0, 0)
+    p.blob(ox, oy, 2.4, 6.2, (96, 112, 20), DINK, 1.3, 0.05, rot=a)
+    # two tiny black eyes just above the snout base
+    ex, ey = BX1 - 6.5, top + 11.5
+    for dx in (0.0, 6.0):
+        p.blob(ex - dx, ey, 1.2, 2.1, DINK, None, 0, 0.0)
     if hat:
-        hx, hy = 18, top - 4
-        p.poly([(hx - 9, hy + 2), (hx - 7, hy - 6), (hx + 6, hy - 7), (hx + 10, hy + 2)], (70, 130, 220), INK, 1.5)
-        p.poly([(hx - 3, hy - 6.5), (hx + 1.5, hy - 6.8), (hx + 3, hy + 2), (hx - 5, hy + 2)], (240, 90, 70), None)
-        p.line([(hx - 9, hy + 2), (hx + 10, hy + 2)], INK, 1.5)
-        p.line([(hx, hy - 7), (hx, hy - 12)], INK, 1.4)
+        hx, hy = (BX0 + BX1) / 2 - 2, top - 1
+        p.poly([(hx - 8, hy + 3), (hx - 6, hy - 5), (hx + 6, hy - 6), (hx + 9, hy + 3)], (70, 130, 220), DINK, 1.5)
+        p.poly([(hx - 3, hy - 5.5), (hx + 1.5, hy - 5.8), (hx + 3, hy + 3), (hx - 5, hy + 3)], (240, 90, 70), None)
+        p.line([(hx - 8, hy + 3), (hx + 9, hy + 3)], DINK, 1.5)
+        p.line([(hx, hy - 6), (hx, hy - 11)], DINK, 1.4)
         bw = 13 if hat == 1 else 5
-        p.blob(hx, hy - 12.5, bw, 1.8, (230, 230, 236), INK, 1.2, 0.1)
+        p.blob(hx, hy - 11.5, bw, 1.8, (230, 230, 236), DINK, 1.2, 0.1)
     return p.im
 
 
@@ -210,26 +222,27 @@ PLW, PLH, PLTOP = 62, 18, 3
 
 def platform(kind, frame=0):
     p = Pic(PLW, PLH)
-    fills = {"green": (118, 196, 62), "blue": (96, 168, 236), "gray": (152, 172, 192), "white": (252, 252, 250),
+    fills = {"green": (160, 210, 84), "blue": (96, 168, 236), "gray": (152, 172, 192), "white": (252, 252, 250),
              "yellow": (240, 204, 56), "red": (232, 70, 50), "brown": (160, 100, 52)}
     f = fills[kind]
+    ink = shade(f, 0.5) if kind != "white" else (150, 150, 150)
     if kind == "brown":
         if frame == 0:
-            p.rrect(2, 3, 60, 15, 4, f, INK, 1.5)
-            p.line([(30, 3), (27, 7), (33, 10), (29, 15)], INK, 1.5)
+            p.rrect(2, 3, 60, 15, 4, f, ink, 1.3)
+            p.line([(30, 3), (27, 7), (33, 10), (29, 15)], ink, 1.3)
             p.line([(10, 7), (18, 8)], shade(f, 0.7), 1.2)
         else:
             gap = 3 * frame
             drop = 4 * frame * frame
-            p.poly([(2, 3 + drop), (28 - gap, 3 + drop), (25 - gap, 8 + drop), (29 - gap, 15 + drop), (2, 15 + drop)], f, INK, 1.5)
-            p.poly([(32 + gap, 3 + drop), (60, 3 + drop), (60, 15 + drop), (31 + gap, 15 + drop), (35 + gap, 9 + drop)], f, INK, 1.5)
+            p.poly([(2, 3 + drop), (28 - gap, 3 + drop), (25 - gap, 8 + drop), (29 - gap, 15 + drop), (2, 15 + drop)], f, ink, 1.3)
+            p.poly([(32 + gap, 3 + drop), (60, 3 + drop), (60, 15 + drop), (31 + gap, 15 + drop), (35 + gap, 9 + drop)], f, ink, 1.3)
         return sprite(p)
-    p.rrect(2, 3, 60, 15, 5, f, INK, 1.5)
+    p.rrect(2, 3, 60, 15, 5, f, ink, 1.3)
     p.line([(8, 6.5), (54, 6.5)], shade(f, 1.15) if kind != "white" else (225, 228, 232), 1.4, 0.1)
     p.line([(8, 12.5), (54, 12.5)], shade(f, 0.82), 1.0, 0.1)
     if kind == "gray":
         for x in (10, 51):
-            p.line([(x, 8), (x, 11)], INK, 1.0)
+            p.line([(x, 8), (x, 11)], ink, 1.0)
     if kind == "red" and frame:
         p.line([(14, 4), (48, 14)], (255, 220, 120), 1.3)
     return sprite(p)
@@ -289,49 +302,55 @@ def item_shield():
 
 # ---- monsters -----------------------------------------------------------------------------------------------------------
 def monster(kind, frame):
-    ink = INK
-    if kind == 0:       # green blob with eye stalks and a toothy grin
+    # Thin-lined, colourful cartoon monsters as on the original's artwork: a blue one-eyed blob with a pink toothy mouth, a
+    # purple striped winged insect on eyeball antennae, and a six-armed purple one-eyed creature.
+    if kind == 0:
         p = Pic(54, 50)
+        ink = (30, 50, 110)
         lift = frame * 2
-        p.poly(smooth([(5, 42), (4, 26), (12, 12), (27, 8), (42, 12), (50, 26), (49, 42), (38, 46), (27, 44), (16, 46)], 3),
-               (110, 190, 80), ink, 1.7)
-        for ex in (17, 37):
-            p.line([(ex, 14), (ex + (ex < 27 and -2 or 2), 5 - lift)], ink, 1.5)
-            p.blob(ex + (ex < 27 and -2 or 2), 4 - lift, 5, 5, (255, 255, 255), ink, 1.4)
-            p.dot(ex + (ex < 27 and -1 or 1), 4.5 - lift, 2.0)
-        p.poly(smooth([(11, 27), (27, 33), (43, 27), (41, 37), (27, 41), (13, 37)], 2), (70, 40, 50), ink, 1.4)
-        for tx in (17, 24, 31, 38):
-            p.poly([(tx - 2, 29 + (tx == 24 or tx == 31)), (tx + 2, 30), (tx, 34)], (255, 255, 255), None)
-        for lx in (12, 42):
-            p.line([(lx, 43), (lx + (frame * 3 - 1), 49)], ink, 1.8)
+        p.poly(smooth([(6, 44), (6, 26), (14, 12), (27, 8), (40, 12), (48, 26), (48, 44), (38, 47), (27, 45), (16, 47)], 3),
+               (92, 168, 226), ink, 1.3)
+        for ex, d in ((19, -1), (35, 1)):
+            p.line([(ex, 12), (ex + d * 3, 4 - lift)], ink, 1.2)
+            p.dot(ex + d * 3, 3.5 - lift, 2.3, (250, 215, 60))
+        p.blob(27, 24, 8, 8.5, (255, 255, 255), ink, 1.3)
+        p.dot(27.5 + frame * 0.8, 25, 3.4, ink)
+        p.poly(smooth([(11, 35), (27, 40), (43, 35), (41, 43), (27, 46), (13, 43)], 2), (232, 90, 150), ink, 1.1)
+        for tx in (16, 22, 28, 34, 40):
+            p.poly([(tx - 2, 37.5), (tx + 2, 38), (tx, 42.5)], (255, 255, 255), ink, 0.6)
+        for lx in (14, 40):
+            p.line([(lx, 45), (lx + (frame * 3 - 1), 49.5)], ink, 1.4)
         return sprite(p)
-    if kind == 1:       # blue flyer, two big eyes, flapping wings
+    if kind == 1:
         p = Pic(58, 44)
+        ink = (60, 40, 110)
         wy = 8 + frame * 9
         for sx in (1, -1):
-            x0 = 29 + sx * 14
-            p.poly([(x0, 22), (x0 + sx * 12, wy - 2), (x0 + sx * 20, wy + 6), (x0 + sx * 8, 26)], (170, 210, 250), ink, 1.5)
-        p.blob(29, 25, 16, 14, (84, 140, 230), ink, 1.7)
-        for ex in (23, 36):
-            p.blob(ex, 22, 5.2, 6, (255, 255, 255), ink, 1.3)
-            p.dot(ex + 0.7, 23, 2.2)
-        p.line([(22, 31), (29, 34), (36, 31)], ink, 1.5)
-        p.line([(24, 12), (21, 4)], ink, 1.4)
-        p.line([(34, 12), (37, 4)], ink, 1.4)
-        p.dot(21, 3.5, 2.2, (240, 90, 70))
-        p.dot(37, 3.5, 2.2, (240, 90, 70))
+            x0 = 29 + sx * 8
+            p.poly([(x0, 22), (x0 + sx * 11, wy - 2), (x0 + sx * 21, wy + 6), (x0 + sx * 11, 28)], (150, 120, 220), ink, 1.2)
+        p.blob(29, 26, 9, 14, (96, 150, 230), ink, 1.3)
+        for k in range(3):
+            y = 20 + k * 6
+            p.line([(21, y), (37, y)], (230, 120, 70), 2.2, 0.05)
+        for sx in (-1, 1):
+            p.line([(29 + sx * 3, 13), (29 + sx * 8, 4)], ink, 1.1)
+            p.blob(29 + sx * 8.5, 3.5, 3.2, 3.2, (255, 255, 255), ink, 1.0)
+            p.dot(29 + sx * 8.5, 3.8, 1.2, ink)
+        p.line([(26, 38), (25, 43)], ink, 1.2)
+        p.line([(32, 38), (33, 43)], ink, 1.2)
         return sprite(p)
-    p = Pic(58, 54)     # purple six-armed
+    p = Pic(58, 54)
+    ink = (70, 30, 100)
     for i in range(6):
         a = math.radians(190 + i * 32 + (frame * 9 if i % 2 else -frame * 9))
         c, sn = math.cos(a), -math.sin(a)
-        p.line([(29, 32), (29 + 13 * c, 32 + 13 * sn), (29 + 24 * c, 32 + 24 * sn)], ink, 2.0)
-    p.blob(29, 27, 15, 15, (150, 90, 190), ink, 1.7)
-    p.poly([(17, 17), (14, 6), (23, 13)], (150, 90, 190), ink, 1.5)
-    p.poly([(41, 17), (44, 6), (35, 13)], (150, 90, 190), ink, 1.5)
-    p.blob(29, 25, 8, 8, (255, 255, 255), ink, 1.4)
-    p.dot(29.5 + frame, 25.5, 3.4)
-    p.line([(21, 36), (29, 39), (37, 36)], ink, 1.5)
+        p.line([(29, 32), (29 + 13 * c, 32 + 13 * sn), (29 + 24 * c, 32 + 24 * sn)], ink, 1.5)
+    p.blob(29, 27, 15, 15, (160, 100, 200), ink, 1.3)
+    p.poly([(17, 17), (14, 6), (23, 13)], (160, 100, 200), ink, 1.2)
+    p.poly([(41, 17), (44, 6), (35, 13)], (160, 100, 200), ink, 1.2)
+    p.blob(29, 25, 8, 8, (255, 255, 255), ink, 1.2)
+    p.dot(29.5 + frame, 25.5, 3.4, ink)
+    p.line([(21, 36), (29, 39), (37, 36)], ink, 1.2)
     return sprite(p)
 
 

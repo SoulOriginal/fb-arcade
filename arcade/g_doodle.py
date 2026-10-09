@@ -27,7 +27,7 @@ PLAT_HALF, FEET_HALF = 29, 12
 TARGET_SCORE = int(os.environ.get("DOODLE_TARGET", "30000"))
 MIN_TICKS, MAX_TICKS = 270 * TICK_RATE, 390 * TICK_RATE      # the game lasts 4.5 to 6.5 minutes
 BULLET_SPEED = 16.0
-BODYX = (37, 27)                            # x of the body centre inside the sprite for facing left / right
+BODYX = (45, 27)                            # x of the body centre inside the sprite for facing left / right
 CARD_TICKS = 100
 
 DIGIT_CELL = D["digits_s"][0][0]
@@ -421,7 +421,7 @@ def make():
             S.shield_t -= 1
         if shoot and S.cool == 0 and S.fly == 0:
             ax, ah = shoot
-            nose_h = S.h + 38
+            nose_h = S.h + 42
             dxs = wrapd(S.x, ax)
             dhs = ah - nose_h
             n = math.hypot(dxs, dhs) or 1.0
@@ -448,7 +448,7 @@ def make():
                 p.brk += 1
             if p.ext_t:
                 p.ext_t -= 1
-            if p.item and S.fly == 0 and abs(wrapd(S.x, p.x + p.item_x)) < 22 and p.h - 8 < S.h + 38 and p.h + 28 > S.h:
+            if p.item and S.fly == 0 and abs(wrapd(S.x, p.x + p.item_x)) < 22 and p.h - 8 < S.h + 42 and p.h + 28 > S.h:
                 collect(p)
         if S.vy < 0 and S.fly == 0:
             for p in S.plats:
@@ -484,7 +484,7 @@ def make():
             hw, hh = MON_BOX[m.kind]
             if m.hp <= 0:
                 continue
-            touching = abs(wrapd(S.x, m.x)) < hw + 12 and m.h - hh - 4 < S.h + 38 and m.h + hh > S.h + 4
+            touching = abs(wrapd(S.x, m.x)) < hw + 12 and m.h - hh - 4 < S.h + 42 and m.h + hh > S.h + 4
             if touching:
                 if m.kind == 4:
                     kill_player("hole", m)
