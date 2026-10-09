@@ -4,7 +4,7 @@ Retro-style arcade games that play themselves, drawn straight to the Linux frame
 No window system, no GPU, no dependencies on the device: just Python 3 and `/dev/fb0`.
 Plug a small board into a TV and it becomes an arcade screensaver.
 
-Twelve games rotate with a transition between them. A bot plays each one until it reaches a score
+Fourteen games rotate with a transition between them. A bot plays each one until it reaches a score
 target (or about nine minutes at most), shows the result and moves on.
 
 | Game | Inspired by |
@@ -21,6 +21,8 @@ target (or about nine minutes at most), shows the result and moves on.
 | `battletoads` | Battletoads, canyon beat 'em up |
 | `turbo` | Battletoads' Turbo Tunnel |
 | `tanks` | Battle City |
+| `isaac` | The Binding of Isaac, room-by-room roguelike shooter |
+| `persia` | Prince of Persia, dungeon platformer with sword fights |
 
 ## Screenshots
 
@@ -34,6 +36,8 @@ target (or about nine minutes at most), shows the result and moves on.
 | `pacman` | `invaders` | `frogger` |
 | <img src="docs/screenshots/battletoads.png" width="300" alt="battletoads"> | <img src="docs/screenshots/turbo.png" width="300" alt="turbo"> | <img src="docs/screenshots/tanks.png" width="300" alt="tanks"> |
 | `battletoads` | `turbo` | `tanks` |
+| <img src="docs/screenshots/isaac.png" width="300" alt="isaac"> | <img src="docs/screenshots/persia.png" width="300" alt="persia"> |  |
+| `isaac` | `persia` |  |
 
 ## Requirements
 
